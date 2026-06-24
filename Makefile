@@ -1,0 +1,4 @@
+.PHONY: pyshell
+
+pyshell:
+	ipython
