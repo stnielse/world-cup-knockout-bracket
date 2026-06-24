@@ -200,16 +200,21 @@ plenty of headroom.
 
 ## New dependencies I'll be asking you to approve (exact pins, per contract)
 
-Before installing anything I will come to you with the exact version. Likely
-list, so you can think about it:
+Before installing anything I will come to you with the exact version. Status
+so far:
 
-- `django==5.1.x` (latest patch at install time)
-- `psycopg[binary]==3.2.x` (Postgres driver)
-- `python-dotenv==1.0.1` (already present)
-- `gunicorn==23.x` (prod WSGI server)
-- `whitenoise==6.x` (static files on Render without a CDN)
-- `django-anymail[resend]==12.x` (Resend backend for Django email)
-- `dj-database-url==2.x` (parse `DATABASE_URL` env var Render gives us)
+- `django==5.2.15` LTS ✓ installed Phase 0 (you approved 2026-06-23)
+- `asgiref==3.11.1` ✓ transitive of django
+- `sqlparse==0.5.5` ✓ transitive of django
+
+Still to come (will ask phase by phase):
+
+- `psycopg[binary]==3.2.x` (Postgres driver — Phase 5)
+- `gunicorn==23.x` (prod WSGI server — Phase 5)
+- `whitenoise==6.x` (static files on Render without a CDN — Phase 5)
+- `django-anymail[resend]==12.x` (Resend backend for Django email — Phase 2)
+- `dj-database-url==2.x` (parse `DATABASE_URL` env var Render gives us —
+  Phase 5)
 - `pytest-django==4.x` + `pytest==8.x` (test runner — optional; can stick
   with `manage.py test` if you'd rather not add deps)
 

@@ -1,4 +1,35 @@
-.PHONY: pyshell
+PYTHON := .venv/bin/python
+PIP := .venv/bin/pip
+SOURCES := apps config manage.py
 
-pyshell:
-	ipython
+.PHONY: install run migrate makemigrations shell createsuperuser test lint format check
+
+install:
+	$(PIP) install -r requirements.txt
+
+run:
+	$(PYTHON) manage.py runserver
+
+migrate:
+	$(PYTHON) manage.py migrate
+
+makemigrations:
+	$(PYTHON) manage.py makemigrations
+
+shell:
+	$(PYTHON) manage.py shell
+
+createsuperuser:
+	$(PYTHON) manage.py createsuperuser
+
+test:
+	$(PYTHON) manage.py test
+
+lint:
+	$(PYTHON) -m flake8 $(SOURCES)
+
+format:
+	$(PYTHON) -m black $(SOURCES)
+
+check:
+	$(PYTHON) manage.py check
