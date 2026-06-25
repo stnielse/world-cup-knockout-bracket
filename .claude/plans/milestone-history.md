@@ -397,7 +397,7 @@ deferred to Phase 3 per decision 1a.
 
 ---
 
-## Phase 3 — Deploy to Render ✅ 2026-06-24 (code shipped + pushed; live deploy in flight)
+## Phase 3 — Deploy to Render ✅ 2026-06-24 (live verified 2026-06-25)
 
 **Scope shipped**
 
@@ -550,14 +550,23 @@ manage.py help bootstrap_superuser → "Create a superuser from env vars
 `make lint` clean. `black --check apps config manage.py` reports
 `32 files would be left unchanged`.
 
-**Live smoke tests deferred until Steven confirms deploy** (post-build
-on `https://wc26-bracket.onrender.com` or whatever URL Render assigns):
-- `/admin/` login with the bootstrap superuser
-- Sign-up → land on My Groups
-- Create a group → see join code
-- Second account joins via code
-- Password reset → real email delivered to a Resend-verified address
-- 15-minute idle cold-start wake-up test
+**Live smoke tests — all green (2026-06-25, reported by Steven as
+"completed with flying colors")**
+- `/admin/` login with the bootstrap superuser ✓
+- Sign-up → land on My Groups ✓
+- Create a group → see join code ✓
+- Second account joins via code ✓
+- Password reset → real email delivered to a Resend-verified address ✓
+- 15-minute idle cold-start wake-up test ✓
+
+Pre-deploy hiccup (already documented in
+[[feedback-clarifying-questions]]): `sync: false` env vars in
+`render.yaml` did NOT auto-prompt in the Render dashboard because the
+Blueprint already existed. Steven added `DJANGO_SUPERUSER_EMAIL` /
+`DJANGO_SUPERUSER_PASSWORD` manually in the Environment tab, which
+triggered a redeploy; the build then ran `bootstrap_superuser` and
+printed `Created superuser <email>.`. Idempotent design held — no risk
+of re-creating on subsequent deploys.
 
 **Deviations from `initial-architecture.md`**
 - **Plan had Render deploy as Phase 5; it ran as Phase 3.** Already
@@ -576,10 +585,6 @@ on `https://wc26-bracket.onrender.com` or whatever URL Render assigns):
 
 **Pending / deferred (NOT blockers for Phase 3 sign-off, but worth
 remembering)**
-- **Live smoke test.** Until Steven runs through `/admin/` login, signup,
-  create-group, join-group, password-reset on the live URL, Phase 3 is
-  "code shipped, deploy in flight." Will append a verification
-  paragraph here once it's confirmed.
 - **Resend verified domain.** Steven explicitly chose to defer this
   decision. Sandbox restricts password-reset deliverability to verified
   test recipients. Flipping later is one env var + DNS work; no code
