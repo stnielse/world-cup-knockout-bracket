@@ -1,3 +1,4 @@
+import secrets
 from datetime import timedelta
 
 from django.conf import settings
@@ -5,6 +6,14 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import UniqueConstraint
 from django.utils import timezone
+
+JOIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+JOIN_CODE_LEN = 6
+JOIN_CODE_MAX_TRIES = 10
+
+
+def generate_join_code() -> str:
+    return "".join(secrets.choice(JOIN_CODE_ALPHABET) for _ in range(JOIN_CODE_LEN))
 
 
 class Round(models.TextChoices):
@@ -100,6 +109,17 @@ class Group(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.join_code:
+            for _ in range(JOIN_CODE_MAX_TRIES):
+                candidate = generate_join_code()
+                if not Group.objects.filter(join_code=candidate).exists():
+                    self.join_code = candidate
+                    break
+            else:
+                raise RuntimeError("Could not generate a unique join code")
+        super().save(*args, **kwargs)
 
 
 class GroupMembership(models.Model):

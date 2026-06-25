@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Join group · WC26 Bracket{% endblock %}
+{% block content %}
+<h1>Join a group</h1>
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Join</button>
+</form>
+<p><a href="{% url 'my_groups' %}">Back to my groups</a></p>
+{% endblock %}

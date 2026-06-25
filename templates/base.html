@@ -1,0 +1,35 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}WC26 Bracket{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+    <header>
+        <a href="{% url 'home' %}" class="brand">WC26 Bracket</a>
+        <nav>
+            {% if user.is_authenticated %}
+                <span class="user">{{ user.email }}</span>
+                <a href="{% url 'my_groups' %}">My groups</a>
+                <form action="{% url 'logout' %}" method="post" class="inline">
+                    {% csrf_token %}
+                    <button type="submit" class="link">Log out</button>
+                </form>
+            {% else %}
+                <a href="{% url 'login' %}">Log in</a>
+                <a href="{% url 'signup' %}">Sign up</a>
+            {% endif %}
+        </nav>
+    </header>
+    <main>
+        {% if messages %}
+            <ul class="messages">
+                {% for m in messages %}<li class="{{ m.tags }}">{{ m }}</li>{% endfor %}
+            </ul>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

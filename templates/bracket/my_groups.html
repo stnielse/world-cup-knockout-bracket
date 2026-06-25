@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}My groups · WC26 Bracket{% endblock %}
+{% block content %}
+<h1>My groups</h1>
+{% if memberships %}
+    <ul class="groups">
+        {% for m in memberships %}
+            <li>
+                <strong>{{ m.group.name }}</strong>
+                <span class="join-code">code: {{ m.group.join_code }}</span>
+            </li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>You're not in any groups yet.</p>
+{% endif %}
+<p class="actions">
+    <a href="{% url 'create_group' %}">Create group</a> ·
+    <a href="{% url 'join_group' %}">Join group</a>
+</p>
+{% endblock %}

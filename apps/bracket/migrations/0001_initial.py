@@ -15,84 +15,260 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.CreateModel(
-            name='ScoringRule',
+            name="ScoringRule",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('round', models.CharField(choices=[('R32', 'Round of 32'), ('R16', 'Round of 16'), ('QF', 'Quarterfinal'), ('SF', 'Semifinal'), ('THIRD', 'Third place'), ('FINAL', 'Final')], max_length=8, unique=True)),
-                ('points', models.PositiveSmallIntegerField()),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "round",
+                    models.CharField(
+                        choices=[
+                            ("R32", "Round of 32"),
+                            ("R16", "Round of 16"),
+                            ("QF", "Quarterfinal"),
+                            ("SF", "Semifinal"),
+                            ("THIRD", "Third place"),
+                            ("FINAL", "Final"),
+                        ],
+                        max_length=8,
+                        unique=True,
+                    ),
+                ),
+                ("points", models.PositiveSmallIntegerField()),
             ],
             options={
-                'ordering': ['round'],
+                "ordering": ["round"],
             },
         ),
         migrations.CreateModel(
-            name='Team',
+            name="Team",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('code', models.CharField(max_length=3, unique=True)),
-                ('name', models.CharField(max_length=64, unique=True)),
-                ('flag_emoji', models.CharField(blank=True, max_length=8)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("code", models.CharField(max_length=3, unique=True)),
+                ("name", models.CharField(max_length=64, unique=True)),
+                ("flag_emoji", models.CharField(blank=True, max_length=8)),
             ],
             options={
-                'ordering': ['name'],
+                "ordering": ["name"],
             },
         ),
         migrations.CreateModel(
-            name='Group',
+            name="Group",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=64)),
-                ('join_code', models.CharField(max_length=8, unique=True)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('owner', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='owned_groups', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("name", models.CharField(max_length=64)),
+                ("join_code", models.CharField(max_length=8, unique=True)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "owner",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="owned_groups",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'ordering': ['-created_at'],
+                "ordering": ["-created_at"],
             },
         ),
         migrations.CreateModel(
-            name='Match',
+            name="Match",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('round', models.CharField(choices=[('R32', 'Round of 32'), ('R16', 'Round of 16'), ('QF', 'Quarterfinal'), ('SF', 'Semifinal'), ('THIRD', 'Third place'), ('FINAL', 'Final')], max_length=8)),
-                ('slot', models.CharField(max_length=16, unique=True)),
-                ('kickoff_at', models.DateTimeField()),
-                ('feeds_as', models.CharField(blank=True, choices=[('home', 'home'), ('away', 'away')], max_length=4)),
-                ('feeds_into', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='fed_by', to='bracket.match')),
-                ('away_team', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='away_matches', to='bracket.team')),
-                ('home_team', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='home_matches', to='bracket.team')),
-                ('winner', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.PROTECT, related_name='won_matches', to='bracket.team')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "round",
+                    models.CharField(
+                        choices=[
+                            ("R32", "Round of 32"),
+                            ("R16", "Round of 16"),
+                            ("QF", "Quarterfinal"),
+                            ("SF", "Semifinal"),
+                            ("THIRD", "Third place"),
+                            ("FINAL", "Final"),
+                        ],
+                        max_length=8,
+                    ),
+                ),
+                ("slot", models.CharField(max_length=16, unique=True)),
+                ("kickoff_at", models.DateTimeField()),
+                (
+                    "feeds_as",
+                    models.CharField(
+                        blank=True,
+                        choices=[("home", "home"), ("away", "away")],
+                        max_length=4,
+                    ),
+                ),
+                (
+                    "feeds_into",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.SET_NULL,
+                        related_name="fed_by",
+                        to="bracket.match",
+                    ),
+                ),
+                (
+                    "away_team",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="away_matches",
+                        to="bracket.team",
+                    ),
+                ),
+                (
+                    "home_team",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="home_matches",
+                        to="bracket.team",
+                    ),
+                ),
+                (
+                    "winner",
+                    models.ForeignKey(
+                        blank=True,
+                        null=True,
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="won_matches",
+                        to="bracket.team",
+                    ),
+                ),
             ],
             options={
-                'ordering': ['kickoff_at', 'slot'],
+                "ordering": ["kickoff_at", "slot"],
             },
         ),
         migrations.CreateModel(
-            name='GroupMembership',
+            name="GroupMembership",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('joined_at', models.DateTimeField(auto_now_add=True)),
-                ('group', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='memberships', to='bracket.group')),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='memberships', to=settings.AUTH_USER_MODEL)),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("joined_at", models.DateTimeField(auto_now_add=True)),
+                (
+                    "group",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="memberships",
+                        to="bracket.group",
+                    ),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="memberships",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
             ],
             options={
-                'ordering': ['joined_at'],
-                'constraints': [models.UniqueConstraint(fields=('group', 'user'), name='unique_group_member')],
+                "ordering": ["joined_at"],
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("group", "user"), name="unique_group_member"
+                    )
+                ],
             },
         ),
         migrations.CreateModel(
-            name='Prediction',
+            name="Prediction",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('updated_at', models.DateTimeField(auto_now=True)),
-                ('group', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='predictions', to='bracket.group')),
-                ('match', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='predictions', to='bracket.match')),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='predictions', to=settings.AUTH_USER_MODEL)),
-                ('picked_winner', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='predicted_in', to='bracket.team')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                (
+                    "group",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="predictions",
+                        to="bracket.group",
+                    ),
+                ),
+                (
+                    "match",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="predictions",
+                        to="bracket.match",
+                    ),
+                ),
+                (
+                    "user",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.CASCADE,
+                        related_name="predictions",
+                        to=settings.AUTH_USER_MODEL,
+                    ),
+                ),
+                (
+                    "picked_winner",
+                    models.ForeignKey(
+                        on_delete=django.db.models.deletion.PROTECT,
+                        related_name="predicted_in",
+                        to="bracket.team",
+                    ),
+                ),
             ],
             options={
-                'ordering': ['-updated_at'],
-                'constraints': [models.UniqueConstraint(fields=('user', 'group', 'match'), name='unique_user_group_match_prediction')],
+                "ordering": ["-updated_at"],
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=("user", "group", "match"),
+                        name="unique_user_group_match_prediction",
+                    )
+                ],
             },
         ),
     ]
