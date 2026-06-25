@@ -631,3 +631,308 @@ Also added to `requirements.txt`:
 - `.env` — never read, edited, or inspected.
 - The Resend API key, superuser email, and superuser password — given to
   Steven by name only (env var keys), values handled entirely on his side.
+
+---
+
+## Phase 4 — Predictions UI ✅ 2026-06-25 (commit `334e398`)
+
+**Scope shipped**
+
+End-to-end one-shot bracket UI. A user opens a group's bracket page, fills
+in winner picks for all 32 matches (later rounds derive their teams from
+the user's earlier picks), and hits **Save Predictions** to lock in their
+bracket. They can hit **Change Predictions** any time before the global
+lock to revise. As matches resolve (admin sets `Match.winner`), their
+picked teams highlight green (correct) or red (incorrect). Group-mates'
+brackets become visible after the global lock fires.
+
+This phase included a significant **mid-conversation design pivot** from
+the original architecture plan's per-match dynamic picking (each match
+locks 1h before its kickoff) to a **one-shot bracket** model (single
+global lock 5 minutes before R32-1 kickoff). Pivot was Steven's call mid-
+implementation discussion; the architecture plan was updated in the same
+commit to reflect the new design (Phase 4 section rewritten in
+`initial-architecture.md`).
+
+**Files added**
+
+*Python:*
+- `apps/bracket/services.py` (235 lines). Pure functions over the bracket
+  state, no models added:
+  - `tournament_lock_time()` / `is_tournament_locked()` are actually in
+    `models.py` (alongside `TOURNAMENT_LOCK_WINDOW = timedelta(minutes=5)`
+    and `TOURNAMENT_LOCK_REFERENCE_SLOT = "R32-1"`) since `Prediction.clean()`
+    needs them at model layer.
+  - `build_user_bracket(user, group)` returns a per-round structure with
+    each match enriched with: actual or derived `home`/`away` teams, the
+    user's pick, `has_teams` / `pickable` flags, and a `scoring` state
+    (`"correct"` / `"incorrect"` / `"neutral"`). Top-level metadata
+    includes `lock_time`, `is_locked`, `submitted`, `submitted_at`,
+    `pick_count`, `complete`, `editable_phase`.
+  - `build_group_bracket(group)` aggregates all members' picks per match
+    for the post-lock group view. Returns `picks: []` (empty) pre-lock so
+    in-progress picks stay hidden (per design decision).
+  - `reconcile_user_picks(user, group)` walks the bracket top-down and
+    deletes any `Prediction` whose `picked_winner` is no longer in its
+    match's derived teams. Called after every pick save. Cascades
+    naturally because deletions in early rounds invalidate downstream
+    derivations on subsequent iterations. R32 picks are never auto-
+    reconciled (R32 teams are admin-set, not user-derived).
+  - Helper `_slot_sort_key()` parses the numeric suffix of slot strings
+    ("R32-2" → 2) so per-round ordering is `1, 2, 3, …, 16` instead of
+    lexicographic `1, 10, 11, …, 2`.
+
+*Templates:*
+- `templates/bracket/bracket_view.html` — full page. Header with group
+  name, join code, countdown clock (pre-lock) or "Bracket locked" badge
+  + view toggle (post-lock). Includes either `_user_bracket.html` (My
+  Picks) or `_group_bracket.html` (Group Picks) based on `?view=` GET
+  param. Trailing inline `<script>` runs the countdown JS; tears down
+  the interval and reloads on lock expiry.
+- `templates/bracket/_user_bracket.html` — the HTMX swap target. Contains
+  the actions panel (pick count + Save/Change button) and the bracket
+  grid. Each Save/Change form `hx-post`s back to this same target.
+- `templates/bracket/_match_card.html` — single match card. Branches on
+  three states:
+  1. `has_teams`: render `<form>` with two team buttons, each `hx-post`ing
+     to `match_pick` with the team id. Picked button gets `.picked` class;
+     scoring state on the parent card via `data-scoring` attr.
+  2. Partial (one source picked, other still pending): renders both slots
+     read-only, the known one with `.team-readonly.known` styling, the
+     unknown with `<em>waiting…</em>` placeholder. Communicates progress
+     without misleading "TBD".
+  3. Neither: just "TBD".
+- `templates/bracket/_group_bracket.html` — read-only grid for the group
+  view. Each match shows actual home/away teams plus a list of all
+  members' picks, color-coded against `Match.winner`.
+
+*Infra (additions only to existing files):*
+- `apps/bracket/migrations/0002_groupmembership_bracket_submitted_and_more.py`
+  (auto-generated). Adds the two submission-tracking fields. Reformatted
+  by `black` after generation.
+
+**Files modified**
+
+- `apps/bracket/models.py`:
+  - Added `TOURNAMENT_LOCK_WINDOW = timedelta(minutes=5)`,
+    `TOURNAMENT_LOCK_REFERENCE_SLOT = "R32-1"`, module-level
+    `tournament_lock_time()` and `is_tournament_locked()` helpers.
+  - Removed `Match.LOCK_WINDOW` and `Match.is_locked()` (no longer used;
+    grep-confirmed only Phase 1's seed_bracket comment and the
+    Prediction.clean call referenced them).
+  - Added `GroupMembership.bracket_submitted` (BooleanField, default
+    False) and `bracket_submitted_at` (DateTimeField, nullable).
+  - Rewrote `Prediction.clean()` to check global lock instead of per-
+    match lock. Error message updated accordingly.
+- `apps/bracket/views.py` extended with five view functions:
+  - `bracket_view(group_id)` — full page render. Pre-lock + `?view=group`
+    redirects back to the my-view (group picks are hidden until lock).
+  - `match_pick(group_id, match_id)` — HTMX POST endpoint. Validates
+    membership, validates not locked + not submitted, validates the team
+    is in the match's derived teams, then `update_or_create`s the
+    Prediction and calls `reconcile_user_picks`. Returns the full
+    `_user_bracket.html` fragment for HTMX swap.
+  - `submit_bracket(group_id)` — HTMX POST. Flips the submitted flag if
+    the bracket is complete; rejects with 400 otherwise.
+  - `unsubmit_bracket(group_id)` — HTMX POST. Flips the flag back.
+  - All three HTMX endpoints share `_render_user_bracket_swap()` helper.
+- `apps/bracket/urls.py` — four new routes:
+  `/groups/<int:group_id>/bracket/`,
+  `/groups/<int:group_id>/bracket/match/<int:match_id>/pick/`,
+  `/groups/<int:group_id>/bracket/submit/`,
+  `/groups/<int:group_id>/bracket/unsubmit/`.
+- `config/settings/base.py` — `"django_htmx"` added to `INSTALLED_APPS`,
+  `"django_htmx.middleware.HtmxMiddleware"` to `MIDDLEWARE`.
+- `templates/base.html` — htmx 2.0.7 script tag (Cloudflare CDN, `defer`)
+  in `<head>`; `hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'` on
+  `<body>` so all HTMX POSTs carry CSRF without per-form `{% csrf_token %}`
+  tags. Added `{% block body_class %}` so the bracket page can override
+  body styling (needs a wider max-width than the 720px default).
+- `templates/bracket/my_groups.html` — "Open bracket →" link per group.
+- `apps/bracket/management/commands/seed_bracket.py` — comment updated
+  to reference the new global lock semantics (the placeholder kickoff is
+  why the lock never fires until R32-1's real kickoff is set).
+- `static/css/style.css` — ~250 lines added for the bracket page.
+- `requirements.txt` — `django-htmx==1.27.0` added.
+
+**Design decisions (Steven approved up-front)**
+
+The Phase 4 design was re-negotiated several times mid-discussion. Final
+locked-in decisions, in chronological order of resolution:
+
+1. **Bracket layout**: traditional bracket tree on desktop (left-to-right,
+   single-sided, R32 → FINAL); vertical round-sections on mobile
+   (<768px). Same HTML, CSS media query handles the transformation. I
+   originally proposed round-by-round sections everywhere and called the
+   tree "expensive" — Steven pushed back, I recanted the framing, and we
+   ended at the responsive combo.
+2. **Pick derivation**: dependent rounds (R16/QF/SF/FINAL) derive
+   matchups from the user's prior-round winner picks. THIRD derives from
+   SF *loser* picks (the SF team the user did NOT pick). Source picks
+   become invalid if changed → see cascade decision below.
+3. **Group view visibility**: hidden pre-lock. Toggle "My Picks" / "Group
+   Picks" only meaningful post-lock; group view returns to my-view if
+   accessed pre-lock.
+4. **Late joiners**: can join + view post-lock but cannot enter picks.
+   No new schema state needed — they simply have 0 Predictions and the
+   Save/Change buttons never appear because the global lock has fired.
+5. **HTMX delivery**: `htmx.min.js` from Cloudflare CDN + `django-htmx`
+   middleware (chosen for `request.htmx` truthy/falsy access, even though
+   the views don't actually need to branch on it yet — kept the
+   middleware wired anyway for future fragment-vs-page logic).
+6. **Pivot to one-shot bracket** (decision 6, mid-discussion): instead of
+   per-match dynamic picking, user fills the whole bracket once,
+   single global lock = `R32-1.kickoff_at - 5 minutes`. Eliminates the
+   chain-divergence UX problem and matches how small private bracket
+   pools normally work.
+7. **Save / Change UX**: per-pick auto-save under the hood (each click
+   writes a Prediction immediately) + a per-membership `bracket_submitted`
+   flag that gates editing. Save button enabled only when all 32 picks
+   are made; clicking flips the flag (read-only state, Change button
+   appears). Late-bracket-with-no-Save-clicked still counts at lock —
+   submitted flag is purely about editability, not commit intent.
+8. **Partial-state rendering** (added during browser test): when only
+   one source pick of a dependent match exists, the card shows the known
+   team with the other slot reading "waiting…". Was raised after Steven
+   tested R16-1 with only R32-1 picked and saw a misleading "TBD".
+
+**Implementation notes (judgment calls inside the agreed scope)**
+
+- **Cascade-clear of orphaned downstream picks** (not explicitly
+  approved, flagged at handoff and accepted): when a user changes an
+  earlier-round pick that invalidates a downstream pick's options, the
+  downstream Prediction is auto-deleted. E.g., picked USA in R32-1,
+  picked USA in R16-1, then change R32-1 to MEX → R16-1 derived teams
+  become (MEX, ?), USA is no longer in the match → R16-1 prediction
+  deleted. Save Predictions becomes disabled again until refilled. The
+  alternative (leave orphans, surface a warning) was rejected as
+  needlessly fiddly. Implemented in `reconcile_user_picks`, called from
+  `match_pick` after every save.
+- **One Prediction is the source of truth, even with the submitted
+  flag**: deliberate. Submitted is a UX gate, not a commit checkpoint.
+  This means there's no "snapshot at Save time" — if you Save, then
+  Change, then never re-Save before lock, your latest auto-saved picks
+  count. Steven explicitly chose this forgiving model.
+- **HTMX swap target is the whole `#bracket-grid`** (the actions panel
+  + 32-card grid), not just the single card that was clicked. Reason:
+  cascade-clears can affect multiple cards downstream, and the Save
+  button's enabled state can flip on any pick. Full-grid swap is the
+  one swap pattern that covers every change. Response is ~10KB per pick;
+  acceptable for the pool size.
+- **Countdown clock is inline `<script>` in `bracket_view.html`**, not a
+  separate JS file. ~20 lines. Tears down on lock expiry and reloads
+  the page so the locked state renders.
+- **HTMX version pin (htmx 2.0.7)**: pinned in the script src URL, not
+  via a pip dep. Lives entirely in the template. Approved during browser-
+  test phase; verified on cdnjs first.
+- **No `request.htmx` branching in views yet.** Every HTMX endpoint
+  returns the fragment unconditionally. Plain-browser fallback (curl,
+  non-HTMX client) gets fragment HTML, which is degraded but not broken.
+  The middleware is wired anyway so future endpoints can branch.
+
+**Smoke tests**
+
+*Shell tests via Django test client (10 assertions, all green):*
+- GET bracket page → 200, page renders with countdown
+- POST `match_pick` for R32-1 with USA → 200, Prediction saved
+- POST `match_pick` for R32-2 with CAN → 200, Prediction saved
+- `build_user_bracket(u1, g)` returns R16-1 with derived home=USA,
+  away=CAN, pickable=True ← derivation works
+- POST `match_pick` for derived R16-1 with USA → 200
+- POST `match_pick` for R32-1 with MEX → 200, AND R16-1 prediction is
+  None after the call ← cascade works
+- POST `submit_bracket` with incomplete bracket → 400
+- GET bracket with `?view=group` pre-lock → 302 redirect ← visibility
+  gate works
+- Set Match.winner=MEX (user's pick), build bracket → R32-1 scoring is
+  `"correct"`. Flip to USA → scoring is `"incorrect"`.
+- Force lock by setting R32-1.kickoff_at to past → `is_tournament_locked()`
+  is True. POST `match_pick` → 400. GET bracket → 200 (renders locked
+  state, "Bracket locked" in body). GET `?view=group` → 200 (now allowed).
+
+*Browser tests (Steven, on local dev at `:8765`):*
+- Bracket page renders with countdown ticking, R32-1 / R32-2 picks
+  visible and clickable.
+- Pick USA in R32-1 → highlights blue, Save button stays disabled
+  ("1 of 32 picks made"), R16-1 shows partial state "🇺🇸 USA / waiting…".
+- Pick CAN in R32-2 → R16-1 transitions to full pickable state with
+  USA vs CAN team buttons.
+- Cascade verified: change R32-1 to MEX → R16-1 USA pick disappears.
+- Bracket-tree spatial alignment verified after CSS fix (see below):
+  R32-1 / R32-2 visually flow into R16-1, same down the column.
+- Steven additionally tested by manually setting `Match.winner` for
+  R32-1 and R32-2 in `manage.py shell` and visually confirmed the
+  green / red highlight on his picked teams renders correctly.
+
+**Two bugs caught in browser test, both fixed before commit**
+
+1. **R32 cards rendered in lexicographic order** (1, 10, 11, …, 16, 2,
+   3, …, 9). Sort key was `m.slot` (a string). Fixed by adding
+   `_slot_sort_key()` that parses the numeric suffix; both
+   `build_user_bracket` and `build_group_bracket` now use it.
+2. **Cards visually clipped to ~70px**, hiding the bottom team button.
+   Root cause: `height: 70px` on `.match-card` was less than the
+   content (meta + two ~26px buttons = ~92px). `overflow: hidden`
+   meant the second button was sliced off. Fixed by bumping
+   `.match-card { height: 100px }` and `.bracket-rounds { min-height:
+   1680px }` (16 R32 cards × 100px + breathing room) so the bracket-
+   tree alignment math still works.
+
+**Deviations from `initial-architecture.md`**
+
+The plan was actively updated in the same commit. The old per-match
+dynamic-picking text was replaced with the one-shot bracket spec; the
+revision note in the plan documents the pivot rationale and date.
+Other than the pivot itself, no deviations.
+
+**Pending / deferred (NOT blockers for Phase 4 sign-off)**
+
+- **Auto-advancement when admin sets Match.winner** — when a winner is
+  set on R32-X, the winning team should auto-populate
+  `R16-(X/2).home_team` or `.away_team` per the `feeds_into`/`feeds_as`
+  wiring. Still deferred to Phase 5 (alongside scoring). Workaround for
+  now: Steven manually sets home/away on dependent matches via admin
+  as results come in.
+- **Leaderboard + scoring page** — Phase 5. Per-user point totals
+  computed from `Prediction.picked_winner == Match.winner` joined with
+  `ScoringRule`.
+- **Bracket lock cron / wake-up** — when LOCK_TIME passes, the page
+  needs to re-render in locked state. Currently handled by the
+  countdown JS doing `location.reload()` on expiry, which works only
+  for users with the page open. Acceptable for v1 (the lock state is
+  computed fresh on every GET regardless), but worth noting.
+- **Pickable validation has a subtle UX gap on team change**: if user
+  picks USA in R32-1, then clicks MEX in R32-1, the POST is just an
+  `update_or_create` on Prediction so MEX replaces USA cleanly. But the
+  Reconcile step runs after, which cascades downstream if needed.
+  Tested OK in smoke test; flagging in case there's a corner case I
+  missed.
+- **No formal tests yet** — still using shell-based smoke tests via
+  `Client`. Phase 5 will introduce real `TestCase` coverage (lock-time
+  enforcement, scoring math, cascade reconciliation).
+- **R32 still has only 3 host nations seeded** (USA, MEX, CAN). Full
+  knockout team data lands ~2026-06-27 after group stage finishes.
+  Until then, the bracket is mostly TBD placeholders — useful only for
+  developer testing.
+- **Pre-pick validation accepts any Team object** that's in the match's
+  current derived teams. If admin changes Match.home_team after a user
+  has already picked the (now-changed) team, that pick survives. Edge
+  case; would be handled by a reconcile-on-admin-edit if we cared.
+- **Group view picks display** uses `email|truncatechars:24`. No
+  username/display-name field on User. Acceptable for a friend pool;
+  revisit if anonymity is desired.
+
+**Dependencies introduced** (per dep-approval contract — all pinned to
+exact versions)
+
+| Package | Pin | Purpose | Transitives |
+|---|---|---|---|
+| `django-htmx` | 1.27.0 | Middleware exposing `request.htmx`; required for future fragment-vs-page response branching | None new — only `asgiref>=3.6` and `django>=4.2`, both already in lockfile |
+
+`pip check` clean after install.
+
+Also (not a Python dep, but in the dependency story): htmx 2.0.7 from
+the cdnjs CDN. Pinned in `templates/base.html` `<script src>` URL.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
