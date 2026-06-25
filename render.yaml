@@ -8,6 +8,8 @@ services:
       pip install -r requirements.txt
       python manage.py collectstatic --noinput
       python manage.py migrate --noinput
+      python manage.py bootstrap_superuser
+      python manage.py seed_bracket
     startCommand: gunicorn config.wsgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE
@@ -24,6 +26,10 @@ services:
         sync: false
       - key: DEFAULT_FROM_EMAIL
         value: onboarding@resend.dev
+      - key: DJANGO_SUPERUSER_EMAIL
+        sync: false
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false
 
 databases:
   - name: wc26-bracket-db
