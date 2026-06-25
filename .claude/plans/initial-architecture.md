@@ -113,7 +113,13 @@ plenty of headroom.
 > Each phase ends with you reviewing before we move on. Nothing merges
 > without your sign-off, per working contract.
 
-**Phase 0 — Project skeleton (today)**
+> **Plan revision 2026-06-24**: Render deploy moved from Phase 5 to
+> Phase 3 (between auth and predictions UI). Reason: with kickoff
+> 2026-06-28, front-loading infra-surprise risk (cold starts, Postgres
+> URL parsing, whitenoise, env-var wiring) is worth more than the
+> original "deploy last, when there's more to test" ordering.
+
+**Phase 0 — Project skeleton**
 - `django-admin startproject` into the repo.
 - Custom `User` model from day 1 (avoid future migration pain).
 - Settings split (`settings/base.py`, `dev.py`, `prod.py`) with
@@ -123,8 +129,12 @@ plenty of headroom.
 
 **Phase 1 — Core models + admin**
 - All models above. Migrations. Register in Django admin so you can hand-key
-  match data once R32 draw is published June 27.
-- Seed script for the 32 teams (codes + flag emojis).
+  match data once R32 draw is published 2026-06-27.
+- `seed_teams` management command (idempotent upsert of the 32 knockout
+  teams: code, name, flag emoji).
+- `seed_bracket` management command (creates all 32 `Match` rows and wires
+  the `feeds_into` / `feeds_as` advancement tree; teams and kickoffs left
+  for admin entry).
 
 **Phase 2 — Auth + groups**
 - Sign up / log in / log out views (function-based, with Django's auth
@@ -133,7 +143,16 @@ plenty of headroom.
 - Join-group view (enter join code).
 - "My groups" landing page.
 
-**Phase 3 — Predictions UI**
+**Phase 3 — Deploy to Render** *(moved up from original Phase 5)*
+- `requirements.txt` updated, `gunicorn` + `whitenoise` added, plus the
+  Postgres + `DATABASE_URL` parsing deps.
+- `render.yaml` for one-click setup.
+- Wire `whitenoise` middleware in `prod.py`; parse `DATABASE_URL` into
+  `DATABASES` in `prod.py`.
+- Database migration, create superuser, smoke test of `/admin/` on the
+  live URL.
+
+**Phase 4 — Predictions UI** *(was Phase 3)*
 - Bracket view per group: shows the 32-match bracket, user's own picks
   inline. Each match is a small HTMX-powered form: click a team to pick,
   POST updates the prediction, swaps the fragment.
@@ -145,17 +164,14 @@ plenty of headroom.
   rows as "—" or "locked icon" for un-locked matches. Enforced in the
   template/view layer by gating on `match.is_locked()`.
 
-**Phase 4 — Leaderboard + scoring**
+**Phase 5 — Leaderboard + scoring** *(was Phase 4)*
 - Compute per-user points within a group from `Prediction` × `Match.winner`.
 - Leaderboard page (HTMX polling every ~30s during match windows, or a
   manual refresh button — your call).
+- Auto-advancement: when an admin sets `Match.winner`, push the winner to
+  the appropriate `feeds_into` match's `home_team` / `away_team`.
 
-**Phase 5 — Deploy to Render**
-- `requirements.txt` updated, `gunicorn` + `whitenoise` added.
-- `render.yaml` for one-click setup.
-- Database migration, create superuser, smoke test.
-
-**Phase 6 — Hardening before kickoff (June 27 buffer)**
+**Phase 6 — Hardening before kickoff (2026-06-27 buffer)**
 - Lock-time enforcement test pass.
 - Manually enter the R32 draw the moment FIFA publishes it.
 - Invite real users.
