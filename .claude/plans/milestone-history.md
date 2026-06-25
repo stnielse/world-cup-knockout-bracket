@@ -394,3 +394,235 @@ deferred to Phase 3 per decision 1a.
 
 **Untouched (per working contract)**
 - `.env` — never read, edited, or inspected.
+
+---
+
+## Phase 3 — Deploy to Render ✅ 2026-06-24 (code shipped + pushed; live deploy in flight)
+
+**Scope shipped**
+
+Render Blueprint-driven deploy of the full Phase 1/2 app. Web service +
+free Postgres (90-day window) + whitenoise static files + gunicorn WSGI +
+Resend email backend, all defined declaratively in `render.yaml`. Includes
+an env-driven `bootstrap_superuser` management command because Render's
+free tier doesn't expose a shell (forced a mid-phase pivot from the
+"manual via shell" plan).
+
+Steven completed the GitHub push at end of this round; the Render build /
+deploy run itself was not observed in this session. Live-URL smoke test
+is the only blocker remaining for Phase 3 sign-off.
+
+**Files added**
+
+*Python:*
+- `apps/accounts/management/__init__.py` (empty)
+- `apps/accounts/management/commands/__init__.py` (empty)
+- `apps/accounts/management/commands/bootstrap_superuser.py` — 17-line
+  custom management command. Reads `DJANGO_SUPERUSER_EMAIL` and
+  `DJANGO_SUPERUSER_PASSWORD` from environment. No-ops with a log message
+  if either is unset. No-ops with a log message if a user with that email
+  already exists. Otherwise calls `User.objects.create_superuser()`.
+  Designed to be safe in `buildCommand` on every deploy.
+
+*Infra:*
+- `render.yaml` — Render Blueprint spec defining one web service
+  (`wc26-bracket`, runtime `python`, plan `free`, branch `main`) and one
+  Postgres database (`wc26-bracket-db`, plan `free`). Build chain:
+  `pip install -r requirements.txt` → `collectstatic --noinput` →
+  `migrate --noinput` → `bootstrap_superuser` → `seed_bracket`. Start
+  command: `gunicorn config.wsgi:application`. Six env vars wired:
+  `DJANGO_SETTINGS_MODULE=config.settings.prod`, `PYTHON_VERSION=3.12.13`,
+  `SECRET_KEY` (Render `generateValue: true`), `DATABASE_URL`
+  (`fromDatabase` reference to the Postgres instance, so Render auto-wires
+  the connection string), `DEFAULT_FROM_EMAIL=onboarding@resend.dev`
+  (hardcoded), and three `sync: false` slots that Steven sets in the
+  dashboard: `RESEND_API_KEY`, `DJANGO_SUPERUSER_EMAIL`,
+  `DJANGO_SUPERUSER_PASSWORD`.
+
+**Files modified**
+
+- `config/settings/prod.py` — full prod config now:
+  - `DATABASES` parsed from `DATABASE_URL` via `dj_database_url.parse(...,
+    conn_max_age=600, ssl_require=True)`. 10-minute connection pooling
+    avoids reconnect overhead on each request; `ssl_require=True` matches
+    Render Postgres's hard requirement.
+  - `ALLOWED_HOSTS` reads from env var, then *additionally* appends
+    `RENDER_EXTERNAL_HOSTNAME` (an env var Render auto-sets on every
+    service) if present. Effect: Steven doesn't need to manually set
+    `ALLOWED_HOSTS` for the `*.onrender.com` URL — it just works. He'd
+    only need to set it when adding a custom domain.
+  - Whitenoise middleware inserted at index 1 (right after
+    `SecurityMiddleware`, per whitenoise docs).
+  - `STORAGES` dict configured with the Django 5 API (not the deprecated
+    `STATICFILES_STORAGE` shim). Uses
+    `whitenoise.storage.CompressedManifestStaticFilesStorage` for the
+    `staticfiles` key (compresses + hashes static files for
+    long-term-cache headers) and the default `FileSystemStorage` for
+    `default`.
+  - Email: `EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"`,
+    `ANYMAIL = {"RESEND_API_KEY": ...}`, `DEFAULT_FROM_EMAIL` and
+    `SERVER_EMAIL` both default to `onboarding@resend.dev` (Resend
+    sandbox sender; override via env var when verified domain ships).
+  - All four env-var checks raise `ImproperlyConfigured` early in module
+    load if missing (`SECRET_KEY`, `ALLOWED_HOSTS`/`RENDER_EXTERNAL_HOSTNAME`,
+    `DATABASE_URL`, `RESEND_API_KEY`). Prevents booting a half-configured
+    prod instance.
+  - Security headers from Phase 0 retained (`SECURE_PROXY_SSL_HEADER`,
+    secure cookies, HSTS 30d with subdomains + preload).
+
+- `requirements.txt` — extended with seven new pinned dependencies (see
+  below for the full table).
+
+**Design decisions (Steven approved up-front via AskUserQuestion)**
+- **Decision 1a: Resend wired in Phase 3, not split to 3.5.** Means the
+  password-reset flow is end-to-end functional on live URL the moment
+  deploy succeeds (modulo the sandbox recipient restriction).
+- **Decision 2-sandbox: Use Resend's `onboarding@resend.dev` sender, not
+  a verified domain.** Zero DNS / domain-purchase work to ship.
+  Trade-off: sandbox can only deliver to email addresses on Steven's
+  Resend verified list, so non-verified friends won't actually receive
+  password-reset emails until a domain is verified. Documented as a
+  reversible decision — flipping to a verified domain later requires
+  *zero* code change: one env var (`DEFAULT_FROM_EMAIL`) flip in Render
+  dashboard + DNS work on the domain side, auto-redeploys.
+- **Decision 3-blueprint: `render.yaml` IaC, not manual dashboard
+  setup.** Whole infra reproducible from repo; future tear-down and
+  rebuild costs nothing.
+- **Decision 4 → pivoted mid-phase.** Originally: "Manual via Render
+  shell." Discovered (Steven flagged it) that Render free tier doesn't
+  expose shell access. Pivoted to env-driven `bootstrap_superuser`
+  management command baked into `buildCommand`. Slightly more code but
+  fully self-contained and idempotent.
+
+**Implementation notes (judgment calls inside the agreed scope)**
+- **`django-anymail==15.0` installed WITHOUT the `[resend]` extra.**
+  Initial install used `django-anymail[resend]==15.0` which pulled ~15
+  transitives (svix, standardwebhooks, pydantic, httpx, anyio, etc.) for
+  inbound webhook signature verification — a code path we don't use in
+  v1 (no bounce/delivery callbacks). I flagged the over-pull, Steven
+  confirmed "manual debugging sounds fine", and we uninstalled the
+  svix tree and reinstalled clean. Net new deps dropped from 24 → 6.
+  `pip check` clean after the reinstall.
+- **`bootstrap_superuser` is idempotent by design and never raises.**
+  Logs a clear message in all three cases (no env, user exists,
+  created). Means the command being permanently in `buildCommand` is
+  safe; Steven can leave the env vars set or delete them after first
+  deploy without any error noise.
+- **`ALLOWED_HOSTS` auto-derives from `RENDER_EXTERNAL_HOSTNAME`** — see
+  prod.py notes above. Not surfaced as a question; just applied because
+  it removes a manual config step.
+
+**Smoke tests (local only — live deploy not yet verified)**
+
+Dev settings still load cleanly:
+```
+.venv/bin/python manage.py check
+System check identified no issues (0 silenced).
+```
+
+Prod settings load cleanly when required env vars are stubbed:
+```
+SECRET_KEY=stub-secret \
+  ALLOWED_HOSTS=test.local \
+  DATABASE_URL='postgres://u:p@host:5432/db' \
+  RESEND_API_KEY=stub-key \
+  DJANGO_SETTINGS_MODULE=config.settings.prod \
+  .venv/bin/python manage.py check
+System check identified no issues (0 silenced).
+```
+
+`bootstrap_superuser` command lifecycle:
+```
+=== command discovery ===
+manage.py help bootstrap_superuser → "Create a superuser from env vars
+                                       if one doesn't exist (idempotent)."
+
+=== no env vars ===
+"DJANGO_SUPERUSER_EMAIL/PASSWORD not set; skipping."
+
+=== first run with env vars ===
+"Created superuser phase3-test@example.com."
+
+=== second run with same env vars (idempotency) ===
+"Superuser phase3-test@example.com already exists; skipping."
+```
+
+`make lint` clean. `black --check apps config manage.py` reports
+`32 files would be left unchanged`.
+
+**Live smoke tests deferred until Steven confirms deploy** (post-build
+on `https://wc26-bracket.onrender.com` or whatever URL Render assigns):
+- `/admin/` login with the bootstrap superuser
+- Sign-up → land on My Groups
+- Create a group → see join code
+- Second account joins via code
+- Password reset → real email delivered to a Resend-verified address
+- 15-minute idle cold-start wake-up test
+
+**Deviations from `initial-architecture.md`**
+- **Plan had Render deploy as Phase 5; it ran as Phase 3.** Already
+  documented in the 2026-06-24 plan revision note.
+- **Plan said "Database migration, create superuser, smoke test."** The
+  `create superuser` step assumed shell access. Reality (Render free
+  tier has no shell): pivoted to `bootstrap_superuser` env-driven
+  command + bake into `buildCommand`. This is a meaningful enough
+  change that the plan file should arguably be updated; for now the
+  deviation is captured here.
+- **`render.yaml` adds a couple of things the plan didn't explicitly
+  call out**: the four `sync: false` env vars (Resend key, two
+  superuser env vars), the explicit `PYTHON_VERSION`, and the
+  `seed_bracket` invocation in `buildCommand` (so a fresh deploy comes
+  up with the 32 matches already wired).
+
+**Pending / deferred (NOT blockers for Phase 3 sign-off, but worth
+remembering)**
+- **Live smoke test.** Until Steven runs through `/admin/` login, signup,
+  create-group, join-group, password-reset on the live URL, Phase 3 is
+  "code shipped, deploy in flight." Will append a verification
+  paragraph here once it's confirmed.
+- **Resend verified domain.** Steven explicitly chose to defer this
+  decision. Sandbox restricts password-reset deliverability to verified
+  test recipients. Flipping later is one env var + DNS work; no code
+  change.
+- **Custom app domain** (e.g. `bracket.something.com` instead of
+  `wc26-bracket.onrender.com`). Trivial later: Render dashboard add +
+  one DNS record + extend `ALLOWED_HOSTS`. No code change.
+- **Full team data** still only 3 host-nation placeholders. Steven will
+  populate `TEAMS` in `seed_teams.py` after the group stage finishes
+  (~2026-06-27); seed_teams is not in `buildCommand` yet, so re-seeding
+  teams in prod will require either committing the updated TEAMS list
+  (triggering a redeploy that runs `seed_teams` if we add it) or
+  running it via local-against-remote-DB workaround (see below).
+- **ScoringRule data.** Still no rows. Will be hand-added via `/admin/`
+  on the live URL, or via a future `seed_scoring_rules` command.
+- **Local-against-remote-DB workflow** documented in the chat history
+  for the "I need to run a one-off mgmt command and Render has no
+  shell" scenario: copy External Database URL from Render dashboard,
+  set as `DATABASE_URL` env var locally alongside stubbed `SECRET_KEY`
+  / `ALLOWED_HOSTS` / `RESEND_API_KEY`, run `manage.py <cmd>`. Goes
+  over SSL public internet; fine for occasional ops.
+
+**Dependencies introduced** (per dep-approval contract — all pinned to
+exact versions)
+
+Approved up-front:
+| Package | Pin | Purpose |
+|---|---|---|
+| `psycopg` | 3.3.4 | Postgres driver (psycopg 3) |
+| `psycopg-binary` | 3.3.4 | Bundled with `psycopg[binary]` extra; no system libpq needed |
+| `gunicorn` | 26.0.0 | Production WSGI server |
+| `whitenoise` | 6.12.0 | Static file serving |
+| `dj-database-url` | 3.1.2 | Parses Render's `DATABASE_URL` env var |
+| `django-anymail` | 15.0 | Email backend for Resend (base, no `[resend]` extra) |
+
+Also added to `requirements.txt`:
+| Package | Pin | Note |
+|---|---|---|
+| `resend` | 2.32.2 | Official Resend Python SDK. Not used by `django-anymail`'s base Resend backend (that backend just makes HTTP calls via the existing `requests` lib). Available in the env for future direct use. |
+
+`pip check` clean after install.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
+- The Resend API key, superuser email, and superuser password — given to
+  Steven by name only (env var keys), values handled entirely on his side.
