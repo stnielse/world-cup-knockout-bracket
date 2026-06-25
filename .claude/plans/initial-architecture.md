@@ -153,16 +153,65 @@ plenty of headroom.
   live URL.
 
 **Phase 4 — Predictions UI** *(was Phase 3)*
-- Bracket view per group: shows the 32-match bracket, user's own picks
-  inline. Each match is a small HTMX-powered form: click a team to pick,
-  POST updates the prediction, swaps the fragment.
-- Server-side: derive subsequent rounds' "predicted matchups" from this
-  user's earlier picks. Lock-checks on every save (`kickoff_at - now > 1h`).
-- **Pick visibility (your decision)**: a user only sees other members'
-  picks for a match *after* that match has locked (i.e.,
-  `kickoff_at - now <= 1h`). Before that, the bracket shows other members'
-  rows as "—" or "locked icon" for un-locked matches. Enforced in the
-  template/view layer by gating on `match.is_locked()`.
+
+> **Design pivot 2026-06-25**: original plan called for per-match dynamic
+> picking with a 1h-before-kickoff lock per match. Replaced with a
+> **one-shot bracket** model: user picks the entire bracket once, with a
+> single global lock 5 minutes before the first R32 match. Simpler,
+> matches the typical small private bracket pool UX, and avoids the
+> "chain divergence" UX problem (what does R16 look like if your R32 pick
+> was wrong?). Trade-off accepted: users cannot adjust later-round picks
+> based on early-round results.
+
+**Behavior**
+- One bracket per (user, group), all 32 picks made once before kickoff.
+- Single global `LOCK_TIME = R32-1.kickoff_at - 5 minutes`.
+- Bracket page header: live countdown clock until lock.
+- **Save / Change UX**: pre-lock, the user fills the bracket; clicking
+  "Save Predictions" (enabled only when all 32 picks are made) flips a
+  per-membership `bracket_submitted` flag and renders the bracket
+  read-only with a "Change Predictions" button. Clicking Change flips
+  the flag back and re-enables editing. Multiple Save/Change cycles
+  allowed until LOCK_TIME, after which both buttons disappear.
+- **Per-pick auto-save under the hood**: each team click is an HTMX POST
+  that writes the `Prediction` row immediately. The submitted flag is
+  purely a UX gate for editing; all picks in the DB at LOCK_TIME count
+  for scoring regardless of submitted state (forgiving model).
+- **Derivation**: dependent rounds (R16, QF, SF, FINAL) show the user's
+  predicted matchup derived from their prior-round winner picks. THIRD
+  derives from the SF *loser* picks (the team the user did not pick to
+  win SF-1 / SF-2). Dependent cards stay locked until both source picks
+  are made.
+- **Pre-lock visibility**: members cannot see each other's in-progress
+  picks before LOCK_TIME (preserves the social reveal moment).
+- **Post-lock**: bracket becomes read-only. Group view toggle ("My
+  Picks" ↔ "Group Picks") becomes available. As the tournament
+  progresses and admin sets `Match.winner`, the user's picked team gets
+  a green highlight (correct) or red highlight (wrong, or no longer in
+  the actual matchup); unresolved matches stay neutral.
+- **Late joiners** (sign up to a group after LOCK_TIME): can join + view
+  the leaderboard and other members' brackets, but cannot enter their
+  own picks. Their leaderboard entry shows 0 points / "missed lock."
+
+**Layout**
+- Desktop (≥768px): traditional bracket tree — flex columns, one column
+  per round, R32 on the left flowing right to FINAL. No drawn connector
+  lines first pass (spatial alignment alone reads as "bracket"); can
+  add later with CSS pseudo-elements.
+- Mobile (<768px): same HTML, media query collapses into vertical
+  round-sections (R32 → R16 → QF → SF → THIRD → FINAL stacked top-to-
+  bottom). Card markup is shared; only layout CSS differs.
+
+**Schema additions**
+- `GroupMembership.bracket_submitted` (bool, default False)
+- `GroupMembership.bracket_submitted_at` (datetime, nullable)
+- `Prediction.clean()` rewritten to check the global lock instead of
+  per-match.
+
+**New dependency**
+- `django-htmx==1.27.0` — middleware exposing `request.htmx` truthy/
+  falsy for fragment-vs-page response branching. Zero transitives
+  beyond already-installed `asgiref` and `django`.
 
 **Phase 5 — Leaderboard + scoring** *(was Phase 4)*
 - Compute per-user points within a group from `Prediction` × `Match.winner`.

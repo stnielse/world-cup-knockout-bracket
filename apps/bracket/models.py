@@ -11,6 +11,9 @@ JOIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 JOIN_CODE_LEN = 6
 JOIN_CODE_MAX_TRIES = 10
 
+TOURNAMENT_LOCK_WINDOW = timedelta(minutes=5)
+TOURNAMENT_LOCK_REFERENCE_SLOT = "R32-1"
+
 
 def generate_join_code() -> str:
     return "".join(secrets.choice(JOIN_CODE_ALPHABET) for _ in range(JOIN_CODE_LEN))
@@ -43,8 +46,6 @@ class Team(models.Model):
 
 
 class Match(models.Model):
-    LOCK_WINDOW = timedelta(hours=1)
-
     round = models.CharField(max_length=8, choices=Round.choices)
     slot = models.CharField(max_length=16, unique=True)
     home_team = models.ForeignKey(
@@ -90,8 +91,17 @@ class Match(models.Model):
         a = self.away_team.code if self.away_team else "?"
         return f"{self.slot}: {h} v {a}"
 
-    def is_locked(self) -> bool:
-        return (self.kickoff_at - timezone.now()) <= self.LOCK_WINDOW
+
+def tournament_lock_time():
+    first = Match.objects.filter(slot=TOURNAMENT_LOCK_REFERENCE_SLOT).first()
+    if first is None:
+        return None
+    return first.kickoff_at - TOURNAMENT_LOCK_WINDOW
+
+
+def is_tournament_locked() -> bool:
+    lock = tournament_lock_time()
+    return lock is not None and timezone.now() >= lock
 
 
 class Group(models.Model):
@@ -134,6 +144,8 @@ class GroupMembership(models.Model):
         related_name="memberships",
     )
     joined_at = models.DateTimeField(auto_now_add=True)
+    bracket_submitted = models.BooleanField(default=False)
+    bracket_submitted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -181,9 +193,10 @@ class Prediction(models.Model):
         return f"{self.user} → {self.picked_winner} ({self.match.slot})"
 
     def clean(self):
-        if self.match_id and self.match.is_locked():
+        if is_tournament_locked():
             raise ValidationError(
-                "This match is locked. Picks closed 1 hour before kickoff."
+                "The tournament bracket is locked. Picks closed 5 minutes "
+                "before the first match."
             )
 
     def save(self, *args, **kwargs):

@@ -1,0 +1,43 @@
+{# Group view: read-only grid showing every member's pick per match. #}
+<div class="bracket-rounds group-view">
+    {% for round_data in bracket.rounds %}
+        <div class="round" data-round="{{ round_data.round }}">
+            <h2 class="round-label">{{ round_data.label }}</h2>
+            <div class="round-matches">
+                {% for entry in round_data.matches %}
+                    <div class="match-card group-card" data-slot="{{ entry.match.slot }}">
+                        <div class="match-meta">
+                            <span class="slot">{{ entry.match.slot }}</span>
+                            {% if entry.match.kickoff_at.year < 2099 %}
+                                <span class="kickoff">{{ entry.match.kickoff_at|date:"M j H:i" }}</span>
+                            {% endif %}
+                        </div>
+                        {% if entry.home and entry.away %}
+                            <div class="teams-display">
+                                <span class="team{% if entry.winner.id == entry.home.id %} team-winner{% endif %}">
+                                    {{ entry.home.flag_emoji }} {{ entry.home.code }}
+                                </span>
+                                <span class="vs">vs</span>
+                                <span class="team{% if entry.winner.id == entry.away.id %} team-winner{% endif %}">
+                                    {{ entry.away.flag_emoji }} {{ entry.away.code }}
+                                </span>
+                            </div>
+                        {% else %}
+                            <p class="teams-placeholder">TBD</p>
+                        {% endif %}
+                        {% if entry.picks %}
+                            <ul class="group-picks">
+                                {% for pick in entry.picks %}
+                                    <li class="{% if entry.winner.id == pick.team.id %}pick-correct{% elif entry.winner %}pick-incorrect{% endif %}">
+                                        <span class="picker">{{ pick.user.email|truncatechars:24 }}</span>
+                                        <span class="picked">{{ pick.team.code }}</span>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    {% endfor %}
+</div>

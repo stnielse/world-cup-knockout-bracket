@@ -33,9 +33,9 @@ from django.core.management.base import BaseCommand
 
 from apps.bracket.models import FeedAs, Match, Round
 
-# Far-future placeholder so is_locked() returns False until a real kickoff is
-# entered. Year 2099 is deliberately absurd — easy to spot in admin if you
-# forgot to fill one in.
+# Far-future placeholder so the tournament global lock never fires until a
+# real R32-1 kickoff is entered. Year 2099 is deliberately absurd — easy to
+# spot in admin if you forgot to fill one in.
 PLACEHOLDER_KICKOFF = datetime(2099, 12, 31, tzinfo=UTC)
 
 

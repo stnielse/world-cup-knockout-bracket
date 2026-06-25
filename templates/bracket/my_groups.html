@@ -8,6 +8,7 @@
             <li>
                 <strong>{{ m.group.name }}</strong>
                 <span class="join-code">code: {{ m.group.join_code }}</span>
+                <a href="{% url 'bracket_view' m.group.id %}" class="bracket-link">Open bracket →</a>
             </li>
         {% endfor %}
     </ul>

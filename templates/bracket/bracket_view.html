@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}{{ group.name }} bracket · WC26 Bracket{% endblock %}
+{% block body_class %}bracket-page-body{% endblock %}
+
+{% block content %}
+<section class="bracket-page">
+    <header class="bracket-header">
+        <h1>{{ group.name }}</h1>
+        <p class="group-meta">
+            Code <span class="join-code">{{ group.join_code }}</span> ·
+            <a href="{% url 'my_groups' %}">Back to groups</a>
+        </p>
+
+        {% if is_locked %}
+            <p class="lock-state locked">Bracket locked.</p>
+            <nav class="view-toggle">
+                <a href="?view=mine" class="{% if view_mode == 'mine' %}active{% endif %}">My Picks</a>
+                <a href="?view=group" class="{% if view_mode == 'group' %}active{% endif %}">Group Picks</a>
+            </nav>
+        {% else %}
+            <p class="lock-state countdown" data-lock-time="{{ bracket.lock_time|date:'c' }}">
+                Time until lock: <span class="countdown-clock">computing…</span>
+            </p>
+        {% endif %}
+    </header>
+
+    {% if view_mode == "group" %}
+        {% include "bracket/_group_bracket.html" %}
+    {% else %}
+        <div id="bracket-grid">
+            {% include "bracket/_user_bracket.html" %}
+        </div>
+    {% endif %}
+</section>
+
+{% if not is_locked %}
+<script>
+    (function() {
+        const target = document.querySelector('.lock-state.countdown');
+        if (!target) return;
+        const clock = target.querySelector('.countdown-clock');
+        const lockTime = new Date(target.dataset.lockTime).getTime();
+        let intervalId = null;
+        function tick() {
+            const now = Date.now();
+            let diff = Math.max(0, lockTime - now);
+            const d = Math.floor(diff / 86400000); diff -= d * 86400000;
+            const h = Math.floor(diff / 3600000); diff -= h * 3600000;
+            const m = Math.floor(diff / 60000); diff -= m * 60000;
+            const s = Math.floor(diff / 1000);
+            clock.textContent = d + 'd ' + h + 'h ' + m + 'm ' + s + 's';
+            if (now >= lockTime) { clearInterval(intervalId); location.reload(); }
+        }
+        tick();
+        intervalId = setInterval(tick, 1000);
+    })();
+</script>
+{% endif %}
+{% endblock %}

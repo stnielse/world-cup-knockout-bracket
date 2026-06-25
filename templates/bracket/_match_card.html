@@ -1,0 +1,48 @@
+{# Single match card for the user's own bracket. Expects `entry` and `group`. #}
+<div class="match-card" data-slot="{{ entry.match.slot }}" data-scoring="{{ entry.scoring }}">
+    <div class="match-meta">
+        <span class="slot">{{ entry.match.slot }}</span>
+        {% if entry.match.kickoff_at.year < 2099 %}
+            <span class="kickoff">{{ entry.match.kickoff_at|date:"M j H:i" }}</span>
+        {% endif %}
+    </div>
+    {% if entry.has_teams %}
+        <form hx-post="{% url 'match_pick' group.id entry.match.id %}" hx-target="#bracket-grid">
+            <button type="submit" name="team" value="{{ entry.home.id }}"
+                class="team{% if entry.pick.id == entry.home.id %} picked{% endif %}"
+                title="{{ entry.home.name }}"
+                {% if not entry.pickable %}disabled{% endif %}>
+                <span class="flag">{{ entry.home.flag_emoji }}</span>
+                <span class="team-name">{{ entry.home.code }}</span>
+            </button>
+            <button type="submit" name="team" value="{{ entry.away.id }}"
+                class="team{% if entry.pick.id == entry.away.id %} picked{% endif %}"
+                title="{{ entry.away.name }}"
+                {% if not entry.pickable %}disabled{% endif %}>
+                <span class="flag">{{ entry.away.flag_emoji }}</span>
+                <span class="team-name">{{ entry.away.code }}</span>
+            </button>
+        </form>
+    {% elif entry.home or entry.away %}
+        <div class="teams-partial">
+            <div class="team-readonly{% if entry.home %} known{% else %} unknown{% endif %}">
+                {% if entry.home %}
+                    <span class="flag">{{ entry.home.flag_emoji }}</span>
+                    <span class="team-name">{{ entry.home.code }}</span>
+                {% else %}
+                    <span class="placeholder-text">waiting…</span>
+                {% endif %}
+            </div>
+            <div class="team-readonly{% if entry.away %} known{% else %} unknown{% endif %}">
+                {% if entry.away %}
+                    <span class="flag">{{ entry.away.flag_emoji }}</span>
+                    <span class="team-name">{{ entry.away.code }}</span>
+                {% else %}
+                    <span class="placeholder-text">waiting…</span>
+                {% endif %}
+            </div>
+        </div>
+    {% else %}
+        <p class="teams-placeholder">TBD</p>
+    {% endif %}
+</div>
