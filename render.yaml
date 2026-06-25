@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: wc26-bracket
+    runtime: python
+    plan: free
+    branch: main
+    buildCommand: |
+      pip install -r requirements.txt
+      python manage.py collectstatic --noinput
+      python manage.py migrate --noinput
+    startCommand: gunicorn config.wsgi:application
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.prod
+      - key: PYTHON_VERSION
+        value: 3.12.13
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: wc26-bracket-db
+          property: connectionString
+      - key: RESEND_API_KEY
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        value: onboarding@resend.dev
+
+databases:
+  - name: wc26-bracket-db
+    plan: free
+    databaseName: wc26_bracket
+    user: wc26_bracket
