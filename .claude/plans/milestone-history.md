@@ -936,3 +936,315 @@ the cdnjs CDN. Pinned in `templates/base.html` `<script src>` URL.
 
 **Untouched (per working contract)**
 - `.env` — never read, edited, or inspected.
+
+---
+
+## Phase 5 — Leaderboard + scoring + auto-advancement ✅ 2026-06-25
+
+**Scope shipped**
+
+Per-round scoring values are seeded; admin-set `Match.winner` auto-advances
+the winner into the next match's `home_team`/`away_team` slot (and the
+*loser* of an SF into THIRD); per-group leaderboard renders on demand with
+positional tied ranks; user brackets stay strictly insulated from canonical
+advancement. Phase 5 was scoped, designed, and shipped in a single evening
+session; all five planned steps are complete with shell-level smoke tests
+passing. Steven's browser verification happens out of band.
+
+**Files added**
+- `apps/bracket/management/commands/seed_scoring_rules.py` — idempotent
+  upsert of the 6 `ScoringRule` rows (R32=1, R16=2, QF=4, SF=8, THIRD=10,
+  FINAL=15). Uses `get_or_create` (not `update_or_create`) intentionally
+  so admin-tweaked point values are preserved across re-runs. Verified by
+  setting R32=99 in shell, re-running the command, and confirming the 99
+  stuck.
+- `templates/bracket/leaderboard.html` — table view: rank, player (full
+  name or email fallback), total points, per-round `correct/total` cells.
+  Highlights the requesting user's row (`tr.you` → soft amber bg + `you`
+  tag chip). Members who haven't hit Submit Predictions get a `draft`
+  chip next to their name (purely visual — picks count regardless per
+  Phase 4's forgiving model).
+
+**Files modified**
+- `apps/bracket/models.py`:
+  - `Match.save()` override: reads previous `winner_id` from DB before
+    `super().save()`, runs `_advance_winner(self)` post-save if it
+    changed. The previous-value snapshot is via `.values_list(...).first()`
+    (one column, one row) so it stays cheap even though every Match save
+    pays for it.
+  - `_advance_winner(match)` module-level helper: handles two cascade
+    paths. (a) `feeds_into` push — sets downstream match's `home_team`
+    or `away_team` based on this match's `feeds_as`; clearing a winner
+    clears the downstream slot; swapping a winner overwrites it. (b)
+    SF → THIRD loser push — when an SF winner is set, the *other* team
+    in that SF gets pushed to `THIRD.home_team` (SF-1) or
+    `THIRD.away_team` (SF-2). Idempotency guard: only writes the
+    downstream save if the current value differs from the target, so
+    repeated saves don't churn.
+  - `_determine_sf_loser(sf_match)` module-level helper: returns the
+    team in the SF that isn't the winner; gracefully `None` if any of
+    (winner, home, away) is unset or the winner isn't one of the two
+    sides (defensive against admin-set inconsistencies).
+- `apps/bracket/services.py`:
+  - **Important behavioral fix**: rewrote `_derived_teams` to be strict
+    per-round. R32 → canonical `match.home_team`/`away_team`
+    (admin-seeded); THIRD → SF losers from this user's SF picks;
+    everything else → pure derivation from this user's source-round
+    picks. The previous implementation had an early-return
+    `if home and away: return home, away` that would silently fall
+    through to canonical teams once auto-advancement filled them in.
+    Once that happened, `reconcile_user_picks` would then delete the
+    user's downstream `Prediction` rows because their `picked_winner`
+    wasn't in the new derived pair — silent data loss for any user
+    whose pick diverged from canonical reality. The fix predates the
+    auto-advancement code by intent (called out during design Q&A,
+    implemented alongside the bug it would have triggered).
+  - `compute_group_standings(group)` new public service. Single query
+    `Prediction.objects.filter(group=group, picked_winner=F('match__winner'))`
+    pulls all correct picks for the group; in-memory aggregation by
+    user_id with per-round counts; multiplies by `ScoringRule.points`
+    for total. Then `GroupMembership` outer-pass adds zero-point
+    entries for members who haven't picked at all (so leaderboard
+    never silently omits a player). Sort key
+    `(-total_points, user.email.lower())` — points desc, email asc as
+    tiebreaker.
+- `apps/bracket/views.py`:
+  - `ROUND_TOTALS` module-level constant: `{R32:16, R16:8, QF:4, SF:2,
+    THIRD:1, FINAL:1}`. Used by the leaderboard view to render the
+    "correct / total" denominator. Stays in sync with `seed_bracket`
+    SLOTS but neither is enforced — drift would only show wrong
+    denominators on the leaderboard, not break scoring.
+  - `leaderboard_view(request, group_id)` — `@login_required`, membership
+    check via existing `_get_membership_or_404`. Computes positional
+    tied rank (e.g. tied players share rank, next rank skips) by
+    walking the sorted standings. Flattens `per_round` dict into a
+    `round_cells` list aligned with `round_columns` so the template
+    can iterate without needing a `get_item` custom filter.
+- `apps/bracket/urls.py` — added one route:
+  `groups/<int:group_id>/leaderboard/` → `name="leaderboard_view"`.
+- `templates/bracket/bracket_view.html` — added Leaderboard link in the
+  group-meta nav line alongside "Back to groups".
+- `templates/bracket/my_groups.html` — added a second `bracket-link`
+  per group row pointing at the leaderboard.
+- `static/css/style.css` — appended ~50 lines for `table.leaderboard`
+  (zebra-free, light grey header, monospace numeric cells, soft amber
+  highlight for `tr.you`, pill-shaped `you-tag` / `not-submitted-tag`
+  chips).
+- `render.yaml` — `seed_scoring_rules` added to `buildCommand` after
+  `seed_bracket`. On next prod deploy the 6 ScoringRule rows get
+  created once and left alone forever. (Idempotent re-runs.)
+
+**Design decisions** (more nuance in the session conversation logs)
+
+1. **User bracket vs canonical bracket are strictly independent.**
+   Steven called this out during design Q&A: setting `Match.winner` in
+   admin must only update the canonical bracket. A user's bracket
+   visualization (which teams display in each round) is frozen on
+   their own predicted future from the moment of lock. Auto-advancement
+   only mutates `Match` rows; never `Prediction` rows. The
+   `_derived_teams` fix above is the structural enforcement of this
+   invariant on the read side; the absence of any reconcile call in
+   `Match.save()` is the structural enforcement on the write side.
+2. **Scoring is correct/incorrect, nothing else.** A user's picked
+   team is compared against `Match.winner` as a simple equality check.
+   If the user's picked team isn't even *in* the canonical matchup
+   (because their R32 picks diverged enough that their fantasy R16-1
+   matchup has zero overlap with canonical R16-1), they still just
+   get red + 0 points on that pick. The bracket card still visually
+   shows their two derived teams — they only lose the chance to score,
+   never the bracket structure itself. Steven explicitly confirmed
+   this is the intended behavior.
+3. **Compute scoring on the fly; no materialized table.** The
+   tournament is 32 matches with a tiny pool. A `Standing` model
+   would just create cache-invalidation work for ~no perf gain. Every
+   leaderboard GET re-queries Predictions and aggregates. "Updates
+   when admin sets a winner" = the next GET reflects it. No polling,
+   no background jobs.
+4. **ScoringRule seeding uses `get_or_create`, not `update_or_create`.**
+   Steven said point values are admin-editable. If an admin changes
+   R16 to 3 in the dashboard, re-deploying the app shouldn't reset it
+   to 2. Different semantics from `seed_teams` (which uses
+   `update_or_create` because team rosters *should* drift back to
+   canonical).
+5. **Positional tied rank, not dense rank.** Tied players share rank,
+   next rank skips. Standard sports convention. Steven explicitly
+   said ties are fine post-final ("not that serious for the friends
+   using this") so no tiebreaker beyond email-alphabetical.
+6. **Per-round columns show `correct/total`, not points.** "Correct
+   counts tell you how well you actually predicted; points are
+   computable from the rules." Template gets `round_cells: [{label,
+   correct, total}, ...]` rather than a dict, so iteration is direct
+   and no custom template filter is needed.
+7. **Leaderboard pre-lock = (b) "render empty leaderboard"** (out of
+   the three options Steven was offered). Shows all members at 0/0/0
+   with a "Picks are still open" header note. Lets people verify the
+   page renders before kickoff and see who's in the group. Falls out
+   naturally because `compute_group_standings` already returns all
+   memberships, and pre-lock there's just no `Match.winner` set so
+   every per-round count is 0.
+8. **SF → THIRD loser cascade lives in `Match.save()` not as a
+   one-shot manual fill.** Originally `seed_bracket`'s comment said
+   admin should manually set THIRD.home_team / away_team after the
+   SFs were played. Auto-advancement handles it now — both SF winner
+   set/cleared/swapped scenarios push the loser (or clear the slot)
+   onto THIRD correctly. Comment in `seed_bracket.py` was NOT
+   updated — minor doc-drift; the wiring still skips THIRD
+   intentionally in `WIRING`, which is correct (it's not a normal
+   feeds_into; it's the loser-side cascade in `_advance_winner`).
+
+**Implementation notes / non-obvious bits**
+
+- `Match.save()` snapshot of previous winner uses
+  `Match.objects.filter(pk=self.pk).values_list('winner_id',
+  flat=True).first()` rather than `Match.objects.get(pk=self.pk)`. One
+  column, one row, no model instantiation — cheaper than the full
+  fetch, and the only thing we need is the FK id to compare.
+- Downstream save in `_advance_winner` uses `update_fields=[field]` so
+  it only touches the one column. This also avoids recursion concerns:
+  the downstream save is a non-winner-changing save, so its own
+  `Match.save()` override no-ops the advancement check (old_winner_id
+  == new_winner_id).
+- `_advance_winner` writes both cascade paths (`feeds_into` push AND
+  SF→THIRD loser push) in the same call. Only one is relevant per
+  match (SF matches have a `feeds_into` of FINAL *and* SF→THIRD
+  trigger; R32 matches have only `feeds_into`). The SF case fires
+  both correctly: SF-1 winner → FINAL.home AND SF-1 loser → THIRD.home.
+- `compute_group_standings` does NOT use `.annotate()` with a
+  `Sum`/`Count` ORM-side aggregation. The natural query
+  (`Prediction × Match.winner × ScoringRule.points`) involves a
+  multi-table join with a conditional that's awkward to express
+  cleanly in the ORM. The in-memory pass over filtered `Prediction`
+  rows is the same cost (32 matches × N members = at most a few
+  hundred rows) and reads more naturally.
+- Leaderboard table renders `s.user.get_full_name|default:s.user.email`.
+  `get_full_name()` returns an empty string when first_name/last_name
+  are both blank — relies on Django's truthy-default behavior. For
+  the current testing accounts (no names set) it falls through to
+  email correctly.
+- The `not-submitted-tag` chip shows for any standings row where
+  `bracket_submitted == False`. This is intentionally informational —
+  not a penalty. Per Phase 4's forgiving lock model, every Prediction
+  row in the DB at lock time counts whether the user clicked
+  Submit Predictions or not.
+
+**Group view scoring was already wired in Phase 4** (originally
+planned as Step 5; turned out to be a no-op)
+
+The original Phase 5 plan listed "extend `build_group_bracket` to mark
+each pick correct/incorrect" as a separate step. On re-reading
+`templates/bracket/_group_bracket.html`, the template was already
+doing the comparison inline using `entry.winner.id == pick.team.id` /
+`entry.winner.id == entry.home.id` etc., against the `picks` list
+already populated by `build_group_bracket`. The CSS classes
+(`.pick-correct`, `.pick-incorrect`, `.team-winner`) were also already
+defined in Phase 4. Smoke test confirmed all three classes render
+correctly in the group view once `Match.winner` is set. Decision: no
+code change. The template-inline comparison is slightly less
+consistent than the service-layer `_scoring_state` pattern used by
+`build_user_bracket`, but per the working contract refactoring for
+consistency-without-functional-improvement was skipped.
+
+**Smoke tests run (all shell-based via Django Client / ORM)**
+
+1. `seed_scoring_rules` first run created 6 rows; second run created
+   0 rows (idempotent).
+2. Admin-edit preservation: set R32 points to 99 in shell, re-ran
+   command, value stuck.
+3. Auto-advance — `R32-1.winner = MEX` → `R16-1.home = MEX`
+   (canonical). Sarah's R16-1 Prediction (USA) stayed in DB; her
+   bracket-view display still showed USA, not MEX.
+4. Auto-advance — `R32-2.winner = BRA` → `R16-1.away = BRA`.
+   Canonical R16-1 now MEX v BRA.
+5. Clear winner — `R32-1.winner = None` → `R16-1.home = None`.
+6. Swap winner — `R32-1.winner = USA` → `R16-1.home = USA`.
+7. SF→THIRD loser cascade — `SF-1.winner = USA` (vs MEX) →
+   `THIRD.home = MEX` (loser) AND `FINAL.home = USA` (winner via
+   feeds_into).
+8. SF-2 cascade — `SF-2.winner = BRA` (vs CAN) → `THIRD.away = CAN`,
+   `FINAL.away = BRA`.
+9. SF winner correction — `SF-1.winner: USA → MEX` → `THIRD.home`
+   updates from MEX to USA (new loser), `FINAL.home` updates from
+   USA to MEX (new winner).
+10. `compute_group_standings` with 3 test users (Sarah 3pts: R32-1
+    USA correct + R16-1 USA correct; Alice 1pt: R32-2 BRA correct;
+    Bob 0pts: no picks) → sorted (Sarah, Alice, Bob) with all three
+    present.
+11. Leaderboard view at `/groups/4/leaderboard/` returns 200, renders
+    all 3 user rows, correct ranks (1/2/3), correct points (3/1/0),
+    `you` tag on Sarah's row, R32 column shows correct counts, all
+    other rounds show 0.
+12. Pre-lock leaderboard on Steven's own single-member group returns
+    200, shows "Picks are still open" header, Steven row with 0
+    points across the board.
+13. Nav links wired — bracket_view page contains
+    `/groups/{id}/leaderboard/`, my_groups page contains same.
+14. Post-lock group view — set R32-1 kickoff to past so
+    `is_tournament_locked()` returns True, hit
+    `/groups/4/bracket/?view=group`, rendered HTML contains all of
+    `pick-correct`, `pick-incorrect`, `team-winner` classes.
+
+**Pending / deferred (NOT blockers for Phase 5 sign-off)**
+
+- **`seed_teams` still not wired into `render.yaml` buildCommand.**
+  Steven explicitly deferred — the TEAMS list in `seed_teams.py` is
+  still the 3-host-nation placeholder. Wiring it now would create the
+  3 placeholder rows in prod on every deploy. Plan: populate the full
+  32-team list locally after group stage finishes (~2026-06-27), then
+  add `python manage.py seed_teams` to `render.yaml` buildCommand and
+  redeploy.
+- **R32 draw teams and kickoff times** — Steven will hand-enter via
+  admin after the FIFA draw is published (~2026-06-27). Phase 6 work.
+- **No formal `TestCase` coverage yet.** Phase 6 buffer day will add:
+  lock-time enforcement, scoring math edge cases, auto-advancement
+  cascade, `_derived_teams` user-bracket isolation, cascade
+  reconciliation on user pick change.
+- **`seed_bracket.py` comment about manually setting THIRD home/away
+  is now stale** (auto-advancement handles it). Minor doc-drift,
+  worth cleaning up in Phase 6 alongside other doc passes.
+- **Admin "set winner" UX is unimproved** — uses the default Django
+  admin form. Steven explicitly didn't want this in Phase 5 scope. If
+  fat-fingering becomes an issue during the tournament, a custom
+  admin action ("set winner with confirmation") could be added.
+- **No notifications on winner set / leaderboard change.** Out of
+  scope per Phase 5 conversation. The intended user behavior is "log
+  in periodically to check the leaderboard"; the page reflects
+  current state on every load.
+- **`bracket_view` for the group view redirects to "mine" pre-lock**
+  (Phase 4 behavior, unchanged). This is still correct — pre-lock
+  there are no other-members' picks to show, by design.
+- **Submission-status `draft` chip on leaderboard could be confusing**
+  in the friend pool if someone reads it as "their picks won't
+  count". Mitigated by the existing `title=` tooltip explanation;
+  could be revisited if users actually ask.
+
+**Deviations from `initial-architecture.md`**
+
+- Plan said Phase 5 would include "HTMX polling every ~30s during
+  match windows, or a manual refresh button". Steven explicitly chose
+  neither — leaderboard recomputes on demand each GET, no polling, no
+  refresh affordance needed.
+- Plan didn't anticipate the `_derived_teams` isolation bug. The fix
+  was identified during design Q&A when Steven asked the clarifying
+  question about whether admin-set winners would change users'
+  bracket displays (they shouldn't, but with the old `_derived_teams`
+  they would have once auto-advancement filled `match.home_team`).
+  Caught before any user-visible damage because Phase 4 had not yet
+  had any actual winners set in prod.
+- Plan listed Phase 5 step "extend build_group_bracket to tag
+  scoring" — turned out to already be wired at template level in
+  Phase 4. No code change for Step 5.
+
+**Dependencies introduced**
+
+None. All Phase 5 work is on existing Django ORM, existing services
+module, existing templates.
+
+**Linter / formatting note**
+
+After the bulk of Phase 5 was written, Steven's editor's linter
+reformatted `apps/bracket/views.py` (multi-line imports, expanded
+dict-comprehension formatting in `leaderboard_view`). Pure cosmetic,
+no logic changes; intentional per Steven's note.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
