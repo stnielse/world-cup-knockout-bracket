@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 from django.core.management import call_command
 
@@ -40,6 +43,27 @@ class TestSeedBracket:
         call_command("seed_bracket")
         third = Match.objects.get(slot="THIRD")
         assert third.feeds_into_id is None
+
+    def test_r32_1_kickoff_force_set_to_canonical(self, db):
+        call_command("seed_bracket")
+        r32_1 = Match.objects.get(slot="R32-1")
+        expected = datetime(2026, 6, 28, 13, 0, tzinfo=ZoneInfo("America/Denver"))
+        assert r32_1.kickoff_at == expected
+
+    def test_r32_1_kickoff_resyncs_after_admin_edit(self, db):
+        call_command("seed_bracket")
+        r32_1 = Match.objects.get(slot="R32-1")
+        r32_1.kickoff_at = datetime(2030, 1, 1, tzinfo=ZoneInfo("UTC"))
+        r32_1.save(update_fields=["kickoff_at"])
+        call_command("seed_bracket")
+        r32_1.refresh_from_db()
+        expected = datetime(2026, 6, 28, 13, 0, tzinfo=ZoneInfo("America/Denver"))
+        assert r32_1.kickoff_at == expected
+
+    def test_other_r32_kickoffs_remain_placeholder(self, db):
+        call_command("seed_bracket")
+        r32_2 = Match.objects.get(slot="R32-2")
+        assert r32_2.kickoff_at.year == 2099
 
 
 @pytest.mark.django_db

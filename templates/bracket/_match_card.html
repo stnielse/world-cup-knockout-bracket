@@ -3,7 +3,7 @@
     <div class="match-meta">
         <span class="slot">{{ entry.match.slot }}</span>
         {% if entry.match.kickoff_at.year < 2099 %}
-            <span class="kickoff">{{ entry.match.kickoff_at|date:"M j H:i" }}</span>
+            <time class="kickoff" datetime="{{ entry.match.kickoff_at|date:'c' }}">{{ entry.match.kickoff_at|date:"M j, P" }} MT</time>
         {% endif %}
     </div>
     {% if entry.has_teams %}

@@ -13,10 +13,15 @@ What this command sets:
 
 What this command does NOT set (leave for admin / tournament data entry):
 - home_team, away_team — known after the R32 draw (~June 27).
-- kickoff_at — known from the FIFA schedule. New rows get a far-future
-  placeholder so the lock check won't fire; re-running this seed will not
-  overwrite a real kickoff already entered.
+- kickoff_at for R32-2..FINAL — known from the FIFA schedule. New rows get a
+  far-future placeholder so the lock check won't fire; re-running this seed
+  will not overwrite a real kickoff already entered.
 - winner — set as matches are played.
+
+Exception: R32-1 kickoff IS code-managed. Because R32-1.kickoff_at drives the
+global tournament lock (kickoff - 5 min), it must be reproducible across local
+/ staging / prod and immune to a stray admin edit. The seed force-sets it to
+R32_1_KICKOFF on every run.
 
 Idempotent: re-running this command does not duplicate matches and does not
 clobber tournament data. It will re-wire feeds_into / feeds_as if the topology
@@ -28,15 +33,20 @@ Run:
 
 import itertools
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from django.core.management.base import BaseCommand
 
 from apps.bracket.models import FeedAs, Match, Round
 
 # Far-future placeholder so the tournament global lock never fires until a
-# real R32-1 kickoff is entered. Year 2099 is deliberately absurd — easy to
+# real kickoff is entered. Year 2099 is deliberately absurd — easy to
 # spot in admin if you forgot to fill one in.
 PLACEHOLDER_KICKOFF = datetime(2099, 12, 31, tzinfo=UTC)
+
+# R32-1 is the WC26 opener: Sunday 2026-06-28 13:00 America/Denver (Mountain).
+# This drives tournament_lock_time() = kickoff - 5 min.
+R32_1_KICKOFF = datetime(2026, 6, 28, 13, 0, tzinfo=ZoneInfo("America/Denver"))
 
 
 # All 32 slots in tournament order. Slot names are the canonical identifiers
@@ -112,9 +122,17 @@ class Command(BaseCommand):
                 m.save(update_fields=["feeds_into", "feeds_as"])
                 rewired += 1
 
+        r32_1 = matches["R32-1"]
+        kickoff_synced = 0
+        if r32_1.kickoff_at != R32_1_KICKOFF:
+            r32_1.kickoff_at = R32_1_KICKOFF
+            r32_1.save(update_fields=["kickoff_at"])
+            kickoff_synced = 1
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Bracket seed: {created} created, {round_synced} round-synced, "
-                f"{rewired} (re)wired, {Match.objects.count()} total matches."
+                f"{rewired} (re)wired, {kickoff_synced} kickoff-synced, "
+                f"{Match.objects.count()} total matches."
             )
         )

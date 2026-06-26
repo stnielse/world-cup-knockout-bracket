@@ -17,8 +17,8 @@ class Command(BaseCommand):
         if User.objects.filter(email=email).exists():
             self.stdout.write(f"Superuser {email} already exists; skipping.")
             return
-        username = os.environ.get("DJANGO_SUPERUSER_USERNAME") or email.split("@")[0][:100]
-        User.objects.create_superuser(
-            email=email, password=password, username=username
+        username = (
+            os.environ.get("DJANGO_SUPERUSER_USERNAME") or email.split("@")[0][:100]
         )
+        User.objects.create_superuser(email=email, password=password, username=username)
         self.stdout.write(f"Created superuser {email} (username={username}).")

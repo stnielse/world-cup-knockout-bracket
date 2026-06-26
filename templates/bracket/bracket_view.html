@@ -21,7 +21,10 @@
             </nav>
         {% else %}
             <p class="lock-state countdown" data-lock-time="{{ bracket.lock_time|date:'c' }}">
-                Time until lock: <span class="countdown-clock">computing…</span>
+                Brackets lock at
+                <time datetime="{{ bracket.lock_time|date:'c' }}">{{ bracket.lock_time|date:"M j, P" }} MT</time>
+                (your local time) ·
+                <span class="countdown-clock">computing…</span> remaining
             </p>
         {% endif %}
     </header>

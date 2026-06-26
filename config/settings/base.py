@@ -101,7 +101,10 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+# Server-side render TZ. DB still stores UTC (USE_TZ=True). Templates and admin
+# render in Mountain by default; static/js/tz.js relocalizes <time datetime>
+# elements to each user's browser tz on page load.
+TIME_ZONE = "America/Denver"
 USE_I18N = True
 USE_TZ = True
 

@@ -6,6 +6,7 @@
     <title>{% block title %}WC26 Bracket{% endblock %}</title>
     <link rel="stylesheet" href="{% static 'css/style.css' %}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/htmx/2.0.7/htmx.min.js" defer></script>
+    <script src="{% static 'js/tz.js' %}" defer></script>
 </head>
 <body class="{% block body_class %}{% endblock %}" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
     <header>
