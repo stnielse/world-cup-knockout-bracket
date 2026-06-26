@@ -10,6 +10,7 @@ services:
       python manage.py migrate --noinput
       python manage.py bootstrap_superuser
       python manage.py seed_bracket
+      python manage.py seed_scoring_rules
     startCommand: gunicorn config.wsgi:application
     envVars:
       - key: DJANGO_SETTINGS_MODULE

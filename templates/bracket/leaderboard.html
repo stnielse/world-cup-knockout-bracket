@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}{{ group.name }} leaderboard · WC26 Bracket{% endblock %}
+{% block body_class %}bracket-page-body{% endblock %}
+
+{% block content %}
+<section class="leaderboard-page">
+    <header class="bracket-header">
+        <h1>{{ group.name }} — Leaderboard</h1>
+        <p class="group-meta">
+            Code <span class="join-code">{{ group.join_code }}</span> ·
+            <a href="{% url 'my_groups' %}">Back to groups</a> ·
+            <a href="{% url 'bracket_view' group.id %}">View bracket</a>
+        </p>
+        {% if not is_locked %}
+            <p class="lock-state countdown">
+                Picks are still open — scores will populate as match winners get set after kickoff.
+            </p>
+        {% endif %}
+    </header>
+
+    <table class="leaderboard">
+        <thead>
+            <tr>
+                <th class="rank">#</th>
+                <th class="player">Player</th>
+                <th class="total">Points</th>
+                {% for col in round_columns %}
+                    <th class="round-col">{{ col.label }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in standings %}
+                <tr class="{% if s.user == request.user %}you{% endif %}">
+                    <td class="rank">{{ s.rank }}</td>
+                    <td class="player">
+                        {{ s.user.get_full_name|default:s.user.email }}
+                        {% if s.user == request.user %}<span class="you-tag">you</span>{% endif %}
+                        {% if not s.submitted %}<span class="not-submitted-tag" title="Bracket not marked as submitted (picks still count)">draft</span>{% endif %}
+                    </td>
+                    <td class="total">{{ s.total_points }}</td>
+                    {% for cell in s.round_cells %}
+                        <td class="round-col">{{ cell.correct }}/{{ cell.total }}</td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

@@ -91,6 +91,74 @@ class Match(models.Model):
         a = self.away_team.code if self.away_team else "?"
         return f"{self.slot}: {h} v {a}"
 
+    def save(self, *args, **kwargs):
+        old_winner_id = None
+        if self.pk is not None:
+            old_winner_id = (
+                Match.objects.filter(pk=self.pk)
+                .values_list("winner_id", flat=True)
+                .first()
+            )
+        super().save(*args, **kwargs)
+        if old_winner_id != self.winner_id:
+            _advance_winner(self)
+
+
+def _advance_winner(match):
+    """Push match.winner into downstream Match.home_team / away_team slots.
+
+    Two paths:
+    - feeds_into: winner advances to the next round's match in this match's
+      `feeds_as` slot. Clearing the winner clears the downstream slot.
+    - SF → THIRD: when a semifinal's winner is set/changed, the *loser* of
+      that SF goes to THIRD's home_team (SF-1) or away_team (SF-2). Clearing
+      the SF winner clears THIRD's slot.
+
+    Only mutates Match rows (the canonical bracket). Never touches Prediction
+    rows — each user's bracket display derives from their own picks and is
+    intentionally insulated from canonical advancement.
+    """
+    new_winner = match.winner
+
+    if match.feeds_into_id and match.feeds_as in (FeedAs.HOME, FeedAs.AWAY):
+        downstream = Match.objects.get(pk=match.feeds_into_id)
+        field = f"{match.feeds_as}_team"
+        current = getattr(downstream, f"{field}_id")
+        target = new_winner.pk if new_winner else None
+        if current != target:
+            setattr(downstream, field, new_winner)
+            downstream.save(update_fields=[field])
+
+    if match.round == Round.SF:
+        third_field = (
+            "home_team"
+            if match.slot == "SF-1"
+            else "away_team" if match.slot == "SF-2" else None
+        )
+        if third_field is not None:
+            third = Match.objects.filter(slot="THIRD").first()
+            if third is not None:
+                loser = _determine_sf_loser(match)
+                current = getattr(third, f"{third_field}_id")
+                target = loser.pk if loser else None
+                if current != target:
+                    setattr(third, third_field, loser)
+                    third.save(update_fields=[third_field])
+
+
+def _determine_sf_loser(sf_match):
+    """The team in `sf_match` that didn't win. None if winner is unset,
+    either side is unset, or the winner isn't one of the two sides."""
+    if sf_match.winner_id is None:
+        return None
+    if sf_match.home_team_id is None or sf_match.away_team_id is None:
+        return None
+    if sf_match.winner_id == sf_match.home_team_id:
+        return sf_match.away_team
+    if sf_match.winner_id == sf_match.away_team_id:
+        return sf_match.home_team
+    return None
+
 
 def tournament_lock_time():
     first = Match.objects.filter(slot=TOURNAMENT_LOCK_REFERENCE_SLOT).first()

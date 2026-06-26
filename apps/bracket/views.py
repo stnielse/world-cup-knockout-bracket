@@ -5,8 +5,24 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .forms import GroupCreateForm, GroupJoinForm
-from .models import GroupMembership, Match, Prediction, Team, is_tournament_locked
-from .services import build_group_bracket, build_user_bracket, reconcile_user_picks
+from .models import GroupMembership, Match, Prediction, Round, Team, is_tournament_locked
+from .services import (
+    build_group_bracket,
+    build_user_bracket,
+    compute_group_standings,
+    reconcile_user_picks,
+)
+
+# Total matches per round — used by the leaderboard template to render
+# "correct / total" cells. Stays in sync with seed_bracket SLOTS.
+ROUND_TOTALS = {
+    Round.R32: 16,
+    Round.R16: 8,
+    Round.QF: 4,
+    Round.SF: 2,
+    Round.THIRD: 1,
+    Round.FINAL: 1,
+}
 
 
 def home(request):
@@ -149,6 +165,41 @@ def submit_bracket(request, group_id):
     membership.bracket_submitted_at = timezone.now()
     membership.save(update_fields=["bracket_submitted", "bracket_submitted_at"])
     return _render_user_bracket_swap(request, membership)
+
+
+@login_required
+def leaderboard_view(request, group_id):
+    membership = _get_membership_or_404(request.user, group_id)
+    standings = compute_group_standings(membership.group)
+
+    round_columns = [
+        {"code": code, "label": Round(code).label, "total": total}
+        for code, total in ROUND_TOTALS.items()
+    ]
+
+    rank = 0
+    last_points = None
+    for i, s in enumerate(standings, start=1):
+        if s["total_points"] != last_points:
+            rank = i
+            last_points = s["total_points"]
+        s["rank"] = rank
+        s["round_cells"] = [
+            {"label": col["label"], "correct": s["per_round"].get(col["code"], 0), "total": col["total"]}
+            for col in round_columns
+        ]
+
+    return render(
+        request,
+        "bracket/leaderboard.html",
+        {
+            "group": membership.group,
+            "membership": membership,
+            "standings": standings,
+            "round_columns": round_columns,
+            "is_locked": is_tournament_locked(),
+        },
+    )
 
 
 @login_required

@@ -27,4 +27,9 @@ urlpatterns = [
         views.unsubmit_bracket,
         name="unsubmit_bracket",
     ),
+    path(
+        "groups/<int:group_id>/leaderboard/",
+        views.leaderboard_view,
+        name="leaderboard_view",
+    ),
 ]

@@ -9,7 +9,8 @@
         <h1>{{ group.name }}</h1>
         <p class="group-meta">
             Code <span class="join-code">{{ group.join_code }}</span> ·
-            <a href="{% url 'my_groups' %}">Back to groups</a>
+            <a href="{% url 'my_groups' %}">Back to groups</a> ·
+            <a href="{% url 'leaderboard_view' group.id %}">Leaderboard</a>
         </p>
 
         {% if is_locked %}
