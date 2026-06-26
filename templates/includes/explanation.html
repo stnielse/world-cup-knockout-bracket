@@ -1,0 +1,63 @@
+<!-- The main backdrop covering the screen -->
+<div id="explanationModal" style="display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background-color:rgba(0,0,0,0.6); overflow-y:auto;">
+    
+    <!-- The actual white popup box -->
+    <div style="background-color:#fefefe; margin:5% auto; padding:30px; border:1px solid #888; width:70%; max-width:800px; border-radius:8px; position:relative; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+        
+        <!-- The X close button -->
+        <span onclick="document.getElementById('explanationModal').style.display='none'" style="float:right; font-size:32px; font-weight:bold; cursor:pointer; color:#aaa; line-height:20px;" onmouseover="this.style.color='#000'" onmouseout="this.style.color='#aaa'">&times;</span>
+        
+        <!-- Steven's Content -->
+        <h1>Welcome! What to do:</h1>
+        <br>
+        <p>Hey friends! I'm so glad you decided to play my World Cup Knockout Bracket game.</p>
+        <p>Let me give you a quick rundown of the site and how it works:</p>
+        <ul>
+            <li>You're already in, which means you've successfully signed up with a username, email, and password. Nice!
+                <ul>
+                    <li> *I know there's a "forgot password" button but I didn't bother paying for a verified domain name, so the free email API I'm using can only send emails to myself, lol. But don't fret! If you really do forget your password just hit me up and I can reset it for you via my admin privileges. </li>
+                </ul>
+            </li>
+            <li>If you're the one setting up the group others will join then click <em>"Create a group"</em>. Share the code with your homies.</li>
+            <li>If you're joining an existing group then click <em>"Join a group"</em> and use the code your homie shared.</li>
+            <li>Once you're inside then you'll see the group(s) you're apart of. From there you can either hit:
+                <ul>
+                    <li>
+                        <span style="text-decoration: underline;">"Open bracket"</span>. This will take you to the meat and potatoes of this site...<br><strong>PICKING A BRACKET!</strong><br>
+                        <ul>
+                            <li>All of the teams/matches will be loaded ASAP after the last match on Saturday night (~10:00pm MT).</li>
+                            <li>After that point you can go ahead and make your predictions!</li>
+                            <li>Pick the winners of EVERY match, from the first round all the way to the final.</li>
+                            <li>Your predicted winner will auto-cascade into the next match.</li>
+                            <li>Once you've locked in picks for each and every match click "Save Predictions"!
+                            If you change your mind you can come back in and update any matches you want, until...</li>
+                            <li><strong>FIVE MINUTES BEFORE FIRST MATCH KICKS OFF</strong></li>
+                            <li><strong>THAT IS 12:55pm MT SUNDAY JUNE 28</strong></li>
+                            <li><strong>BRACKETS WILL BE LOCKED WHEN THE CLOCK DOTH STRIKE</strong></li>
+                            <li>As the tourney progresses your bracket will update according to the true match winners.</li>
+                            <li>If your pick was correct it will be highlighted green!</li>
+                            <li>Incorrect picks will be highlighted red. </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <span style="text-decoration: underline;">"Leaderboard"</span>. This is where you'll track your progress and see who the big dogs in your group are.
+                        <ul>
+                            <li><strong>Scoring Rules are as follows,</strong></li>
+                            <li>Correct guesses in the Round of 32 are worth 1 point.</li>
+                            <li>Correct guesses in the Round of 16 are worth 2 points.</li>
+                            <li>Correct guesses in the Quarterfinal are worth 4 points.</li>
+                            <li>Correct guesses in the Semifinals are worth 8 points.</li>
+                            <li>If you guess the Third Place winner correctly that's 10 points.</li>
+                            <li>Aaaand if you guess the winner of THE FINAL correctly that's 15 points! <em>Look at you hot shot.</em></li>
+                        </ul>
+                </ul>
+            </li>
+        </ul>
+        <p>Well folks I think that about covers it! I hope you like it!</p>
+        <p> Kaitlyn didn't give me much time to whip this up so (hopefully not) if you encounter any bugs<br> just let me know and I'll troubleshoot it for ya. If you're curious about the tech stack I wrote<br> this on, the TL;DR is Django 5.2 with HTMX deployed via Render. If you want to know more then<br> boy howdy I would love to geek out on it with ya! Thanks again for playing!! And remember,<br> <strong>Vamos Brasil!</strong> </p>
+        <p>Steven</p>
+        
+        <!-- Bottom Close Button for Convenience -->
+        <button type="button" onclick="document.getElementById('explanationModal').style.display='none'" style="margin-top:20px; padding:8px 16px; cursor:pointer;">Close</button>
+    </div>
+</div>

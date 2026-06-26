@@ -11,6 +11,9 @@
     <header>
         <a href="{% url 'home' %}" class="brand">WC26 Bracket</a>
         <nav>
+            <button type="button" class="link" onclick="document.getElementById('explanationModal').style.display='block'">
+                Welcome/How To Play
+            </button>
             {% if user.is_authenticated %}
                 <span class="user">{{ user.username }}</span>
                 <a href="{% url 'my_groups' %}">My groups</a>
@@ -32,5 +35,6 @@
         {% endif %}
         {% block content %}{% endblock %}
     </main>
+    {% include "includes/explanation.html" %}
 </body>
 </html>
