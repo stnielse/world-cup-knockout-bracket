@@ -29,7 +29,7 @@
                             <ul class="group-picks">
                                 {% for pick in entry.picks %}
                                     <li class="{% if entry.winner.id == pick.team.id %}pick-correct{% elif entry.winner %}pick-incorrect{% endif %}">
-                                        <span class="picker">{{ pick.user.email|truncatechars:24 }}</span>
+                                        <span class="picker">{{ pick.user.username }}</span>
                                         <span class="picked">{{ pick.team.code }}</span>
                                     </li>
                                 {% endfor %}

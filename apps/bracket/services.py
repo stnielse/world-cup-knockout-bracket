@@ -209,7 +209,7 @@ def compute_group_standings(group):
 
     Includes every group member, even those with zero correct picks (so the
     leaderboard never silently omits a player). Sorted by total_points desc,
-    then by email asc as a stable tiebreaker.
+    then by username asc as a stable tiebreaker.
     """
     points_by_round = dict(ScoringRule.objects.values_list("round", "points"))
 
@@ -243,7 +243,7 @@ def compute_group_standings(group):
             }
         )
 
-    standings.sort(key=lambda s: (-s["total_points"], s["user"].email.lower()))
+    standings.sort(key=lambda s: (-s["total_points"], s["user"].username.lower()))
     return standings
 
 

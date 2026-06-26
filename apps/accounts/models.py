@@ -1,4 +1,5 @@
 from django.contrib.auth.models import AbstractUser, BaseUserManager
+from django.contrib.auth.validators import UnicodeUsernameValidator
 from django.db import models
 
 
@@ -30,13 +31,18 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractUser):
-    username = None
+    username = models.CharField(
+        max_length=100,
+        unique=True,
+        validators=[UnicodeUsernameValidator()],
+        help_text="Shown to other members on the leaderboard. Letters, digits and ./@/+/-/_ only.",
+    )
     email = models.EmailField("email address", unique=True)
 
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = []
+    REQUIRED_FIELDS = ["username"]
 
     objects = UserManager()
 
     def __str__(self):
-        return self.email
+        return self.username

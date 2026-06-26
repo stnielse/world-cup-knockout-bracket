@@ -35,7 +35,7 @@
                 <tr class="{% if s.user == request.user %}you{% endif %}">
                     <td class="rank">{{ s.rank }}</td>
                     <td class="player">
-                        {{ s.user.get_full_name|default:s.user.email }}
+                        {{ s.user.username }}
                         {% if s.user == request.user %}<span class="you-tag">you</span>{% endif %}
                         {% if not s.submitted %}<span class="not-submitted-tag" title="Bracket not marked as submitted (picks still count)">draft</span>{% endif %}
                     </td>

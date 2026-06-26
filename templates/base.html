@@ -12,7 +12,7 @@
         <a href="{% url 'home' %}" class="brand">WC26 Bracket</a>
         <nav>
             {% if user.is_authenticated %}
-                <span class="user">{{ user.email }}</span>
+                <span class="user">{{ user.username }}</span>
                 <a href="{% url 'my_groups' %}">My groups</a>
                 <form action="{% url 'logout' %}" method="post" class="inline">
                     {% csrf_token %}
