@@ -22,8 +22,14 @@ shell:
 createsuperuser:
 	$(PYTHON) manage.py createsuperuser
 
+# `make test [<app>[:<file>[:<test_name>]]]` — see scripts/run_tests.sh.
+# The .DEFAULT rule below swallows the extra goal so Make doesn't try to
+# build a target named after it.
 test:
-	$(PYTHON) manage.py test
+	@./scripts/run_tests.sh $(filter-out $@,$(MAKECMDGOALS))
+
+.DEFAULT:
+	@:
 
 lint:
 	$(PYTHON) -m flake8 $(SOURCES)
