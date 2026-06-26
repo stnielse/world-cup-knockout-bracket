@@ -1677,3 +1677,186 @@ Both compatible with Python 3.12 and Django 5.2 LTS.
 
 **Untouched (per working contract)**
 - `.env` — never read, edited, or inspected.
+
+---
+
+## Tournament lock time codified + timezone-aware UI ✅ 2026-06-25
+
+**Why**
+- The opener is now 3 days away (2026-06-28). The lock time needed to be set
+  to a real value, not the year-2099 placeholder. Real value: Sunday
+  2026-06-28 13:00 America/Denver, i.e. 19:00 UTC. Lock fires at kickoff − 5
+  minutes (= 12:55 MDT / 18:55 UTC).
+- Up to this point all kickoff times rendered in UTC because
+  `TIME_ZONE = "UTC"`. A user in California would have seen "Jun 28 19:00"
+  instead of their actual local lock time of 11:55 AM PDT. Fixable without
+  schema changes by combining a server-side default tz (Mountain) with a
+  client-side `<time datetime>` relocalization pass.
+
+**Decisions made before coding**
+1. **Codify R32-1 in `seed_bracket.py` rather than rely on admin entry.**
+   R32-1.kickoff_at drives the entire global lock; reproducibility across
+   local / staging / prod matters more than admin flexibility for that one
+   field. Other 31 matches keep their existing admin-managed pattern
+   (placeholder 2099 → admin enters real value when scheduled). Schedule
+   volatility (FIFA shifts venues / kickoff times occasionally) is lower
+   for the opener than for downstream matches, reinforcing the asymmetry.
+2. **Client-side relocalization via `Intl.DateTimeFormat`, not per-user
+   timezone preference.** Per-user tz would have required: User schema
+   migration, signup form picker, `timezone.activate()` middleware, and
+   still relied on JS to detect a sane default. Pure client JS is ~15
+   lines, zero schema, zero new deps, and just-works for any browser. We
+   accept that no-JS users see Mountain time (the server-render fallback)
+   — that's a reasonable default given Steven's the tournament admin and
+   the pool is small / friend-group sized.
+3. **`TIME_ZONE = "America/Denver"`** for server-side fallback. DB still
+   stores UTC (`USE_TZ=True` unchanged). Picked Mountain because Steven
+   runs the pool from there and admin pages will render in his tz by
+   default — no manual conversion when entering kickoffs.
+4. **Augment the lock-countdown copy.** Previously "Time until lock: 1d
+   4h 23m". Now also shows the absolute moment ("Brackets lock at
+   Jun 28, 12:55 PM MT (your local time)") because the user explicitly
+   wanted geographic users to see *their* local lock time, not just a
+   countdown. The `MT` suffix in the server-rendered fallback gets
+   stripped when JS rewrites the element.
+
+**Done**
+- `apps/bracket/management/commands/seed_bracket.py`:
+  - Added `R32_1_KICKOFF = datetime(2026, 6, 28, 13, 0,
+    tzinfo=ZoneInfo("America/Denver"))` constant. Stored as aware
+    datetime; Django converts to UTC on save (= 2026-06-28 19:00 UTC).
+  - Added force-sync block after the feeds-wiring loop: compares R32-1's
+    current `kickoff_at` to the constant; if different, updates with
+    `update_fields=["kickoff_at"]` and increments `kickoff_synced`.
+    Re-running the seed is a no-op once the value matches. An admin
+    edit to R32-1 will be re-overwritten on next seed (intentional —
+    code is now authoritative for that field).
+  - Stdout summary line gained a `{kickoff_synced} kickoff-synced` token.
+  - Docstring updated: split "kickoff_at NOT set" into "R32-1 IS code-
+    managed (exception)" + "R32-2..FINAL NOT code-managed (still admin)".
+- `config/settings/base.py`:
+  - `TIME_ZONE = "UTC"` → `"America/Denver"`. Comment explains the
+    division of labor (server fallback render in Mountain, JS
+    relocalizes per viewer).
+- `templates/bracket/_match_card.html`:
+  - `<span class="kickoff">{{ ...|date:"M j H:i" }}</span>`
+    → `<time class="kickoff" datetime="{{ ...|date:'c' }}">{{ ...|date:"M j, P" }} MT</time>`.
+  - Switched from `H:i` (24-hour, e.g. "19:00") to `P` (Django's
+    locale-style 12-hour with AM/PM, e.g. "1:00 p.m."). The "MT" suffix
+    is only seen by no-JS users; JS rewrites textContent entirely.
+- `templates/bracket/_group_bracket.html`: same `<span>` → `<time>` swap.
+- `templates/bracket/bracket_view.html`:
+  - Countdown line rewritten from "Time until lock: <countdown>" to
+    "Brackets lock at <time>{lock_time}</time> (your local time) ·
+    <countdown> remaining". Still uses `data-lock-time` for the
+    ticker (no change to that JS); the new `<time>` element is what
+    `tz.js` relocalizes.
+- `static/js/tz.js` (new, ~25 lines):
+  - IIFE that defines an `Intl.DateTimeFormat` instance (no locale arg
+    = browser default, month-short / day-numeric / hour-numeric /
+    minute-2-digit).
+  - `relocalize(root)` walks `<time[datetime]>` inside the root,
+    parses the ISO attr via `new Date()`, replaces textContent. Sets
+    `data-tz-applied="1"` to make it idempotent across re-fires.
+  - Runs on `DOMContentLoaded` (or immediately if doc already ready),
+    AND on `htmx:afterSwap` events bubbling to `document.body` — so
+    elements injected by HTMX swaps (e.g. `match_pick` re-renders the
+    bracket grid) also get relocalized.
+- `templates/base.html`: added `<script src="{% static 'js/tz.js' %}"
+  defer></script>` as a sibling to the htmx CDN script. Both deferred,
+  both load after parsing.
+- `apps/bracket/tests/test_commands.py`:
+  - Added `datetime` / `zoneinfo.ZoneInfo` imports.
+  - 3 new tests in `TestSeedBracket`:
+    - `test_r32_1_kickoff_force_set_to_canonical`: fresh seed →
+      R32-1.kickoff_at == 2026-06-28 13:00 America/Denver.
+    - `test_r32_1_kickoff_resyncs_after_admin_edit`: seed → admin
+      edit (set to 2030-01-01 UTC) → re-seed → original value
+      restored. Asserts the force-overwrite semantics.
+    - `test_other_r32_kickoffs_remain_placeholder`: R32-2.kickoff_at
+      still has year 2099. Pins the "only R32-1 is code-managed"
+      invariant.
+
+**Smoke tests**
+1. `make test` → 78 passed in 8.10s (was 75; +3 new).
+2. `make lint` clean.
+3. `make check` clean.
+4. Lock-window math, sanity-checked by hand: 2026-06-28 13:00 MDT
+   = 2026-06-28 19:00 UTC. tournament_lock_time() returns
+   2026-06-28 18:55 UTC = 12:55 MDT = 11:55 PDT = 14:55 EDT.
+
+**Files touched**
+- `apps/bracket/management/commands/seed_bracket.py`
+- `apps/bracket/tests/test_commands.py`
+- `config/settings/base.py`
+- `templates/base.html`
+- `templates/bracket/_match_card.html`
+- `templates/bracket/_group_bracket.html`
+- `templates/bracket/bracket_view.html`
+- `static/js/tz.js` (new)
+
+**Decisions worth remembering**
+- **Only R32-1 is code-managed; R32-2..FINAL stay admin-managed.**
+  Steven asked the question explicitly: "why don't other matches need
+  their kickoff time changed?" Answer recorded in conversation: the
+  lock is one-shot and only gates off R32-1; other kickoffs are
+  display-only; FIFA may shift downstream times, so admin entry is
+  more flexible than redeployment. If we ever introduce per-match
+  locking (e.g. QF picks editable until QF kicks off), every
+  kickoff_at becomes behavior-affecting and this asymmetry would need
+  revisiting.
+- **`Intl.DateTimeFormat()` with no locale arg uses the browser's
+  default.** That gives American English-style date formatting for
+  most US users without us having to detect or store a locale. If
+  a user has their browser set to e.g. en-GB, they'll get
+  "28 Jun, 12:55" instead of "Jun 28, 12:55 PM" — acceptable; locale-
+  aware rather than locale-imposed.
+- **`<time>` element, not `<span>`.** Semantic HTML; screen readers
+  and crawlers can interpret the `datetime` attribute. Also lets
+  `tz.js` query with `time[datetime]` rather than a custom class
+  selector.
+- **`data-tz-applied="1"` guard.** Without it, a second HTMX swap
+  could re-format already-formatted text (parsing "Jun 28, 12:55 PM"
+  via `new Date()` would yield Invalid Date and the script would
+  bail, but the guard avoids the wasted work and silent failure
+  mode).
+- **`make typo`-style typo detection from the prior milestone
+  remains intact** — the Makefile's `.DEFAULT` rule was unchanged.
+
+**Pending / deferred**
+- **No automated test of `tz.js`.** The relocalization is JS-only and
+  the suite is Python-only. A Playwright/Selenium pass could verify
+  that a `<time datetime="2026-06-28T19:00:00Z">` element ends up
+  with locale-formatted text after page load, but that's well outside
+  the current test stack and would require browser-test deps.
+  Manual verification only.
+- **No verification of `htmx:afterSwap` path.** The `match_pick` flow
+  is the main consumer (it returns a new bracket grid via HTMX). The
+  swap relocalization works in theory but has only been reviewed by
+  inspection, not exercised in a browser run yet. Quick manual test
+  recommended after deploy: pick a match, confirm `<time>` elements
+  in the re-rendered grid show local tz not UTC.
+- **R32-2..R32-16 kickoffs still placeholder.** Steven will enter
+  these via admin after the R32 draw (~2026-06-27). The
+  `{% if kickoff_at.year < 2099 %}` guard hides the time entirely
+  until entered, so users see "TBD"-style cards with no time
+  rather than wrong times.
+- **`seed_teams` still deferred** from `render.yaml` buildCommand
+  (per prior milestone) — Steven will run it locally once the
+  group stage finalizes the 32-team set.
+
+**Deviations from `initial-architecture.md`**
+- Plan didn't specify timezone handling at all (the architecture doc
+  predates the deploy-readiness pass). Net-additive; doesn't change
+  anything documented.
+- Plan listed seed_bracket as setting "topology + placeholders only,
+  no kickoff times". Now: topology + 31 placeholders + 1 hardcoded
+  (R32-1). Net change is one constant + one force-sync block. Plan
+  file not updated since this is a small refinement and the docstring
+  in the command itself is now the authoritative reference.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
+- `render.yaml` — no env-var or buildCommand changes needed. The
+  `TIME_ZONE` switch is in settings, not env. The codified R32-1
+  kickoff runs via the existing `seed_bracket` buildCommand step.
