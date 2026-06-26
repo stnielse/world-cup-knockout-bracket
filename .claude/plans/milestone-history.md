@@ -1432,3 +1432,248 @@ note there if/when we do a Phase 6 doc-sweep.
 
 **Untouched (per working contract)**
 - `.env` — never read, edited, or inspected.
+
+---
+
+## Test coverage pass ✅ 2026-06-25
+
+Phase 4 / Phase 5 / Username pass all shipped with shell-based smoke
+tests only — Steven flagged that "long overdue" and asked for unit
+tests "ASAP". This pass introduces pytest-django, ships 75 tests
+covering both apps, and adds a granular CLI so individual tests can
+be run during debugging without re-executing the whole suite.
+
+**Scope shipped**
+- 75 tests across 9 files; full suite runs in ~8s.
+- pytest-django integration; `make test` now invokes pytest.
+- Shared fixtures (`bracket`, `make_user`, `make_group`, `make_membership`)
+  in a project-root `conftest.py`.
+- Granular CLI: `make test`, `make test <app>`, `make test <app>:<file>`,
+  `make test <app>:<file>:<test_name>` — driven by `scripts/run_tests.sh`.
+- `.DEFAULT` guard so unknown top-level targets still get Make's
+  "No rule to make target" error (typo safety preserved).
+
+**Files added**
+- `pytest.ini` — `DJANGO_SETTINGS_MODULE = config.settings.dev`,
+  `--strict-markers`, standard test-file glob.
+- `conftest.py` (project root) — `bracket` fixture (calls
+  `seed_bracket` + `seed_scoring_rules` + creates 8 Team rows + seeds
+  R32-1 and R32-2 with future kickoff so `is_tournament_locked()`
+  returns False by default), `_BracketEnv` helper class exposing the
+  teams + a `lock_now()` shortcut, and three factory fixtures
+  (`make_user`/`make_group`/`make_membership`) as closures with
+  auto-incrementing email/username counters.
+- `apps/accounts/tests/__init__.py` (empty package marker).
+- `apps/accounts/tests/test_models.py` — `TestUserModel` (5 tests):
+  `__str__` returns username, username uniqueness IntegrityError,
+  email uniqueness IntegrityError, superuser flag-setting, empty-email
+  ValueError.
+- `apps/accounts/tests/test_forms.py` — `TestEmailUserCreationForm`
+  (5 tests): valid form creates user with both fields, missing
+  username invalid, missing email invalid, invalid username chars
+  rejected by validator, duplicate username rejected.
+- `apps/accounts/tests/test_views.py` — `TestSignupView` (3 tests):
+  GET renders form, valid POST creates+redirects, missing-username
+  POST returns 200 with no creation.
+- `apps/accounts/tests/test_commands.py` — `TestBootstrapSuperuser`
+  (4 tests): no-op when env vars missing, uses explicit
+  `DJANGO_SUPERUSER_USERNAME` when set, falls back to email-prefix
+  when unset, idempotent on second run.
+- `apps/bracket/tests/__init__.py` (empty package marker).
+- `apps/bracket/tests/test_models.py` (18 tests across 5 classes):
+  - `TestMatchAutoAdvancement` (8 tests) — set winner pushes to
+    home, set winner pushes to away, clearing clears downstream,
+    swapping updates downstream, SF→FINAL+THIRD, SF-2 cascade,
+    SF winner correction re-cascades, no-winner-change save is a
+    no-op for downstream.
+  - `TestPredictionLockEnforcement` (2 tests) — pre-lock save
+    allowed, post-lock save raises `ValidationError`.
+  - `TestTournamentLockTime` (4 tests) — None when no R32-1,
+    kickoff − 5min math, locked inside window, unlocked outside.
+  - `TestGroupModel` (3 tests) — auto-generates 6-char join_code,
+    preserves explicit code, unique across groups.
+  - `TestGroupMembershipUniqueness` (1 test) — duplicate `(group,
+    user)` raises `IntegrityError`.
+- `apps/bracket/tests/test_services.py` (14 tests across 4 classes):
+  - `TestDerivedTeamsIsolation` (3 tests) — **the regression-critical
+    invariant suite**. R32 reads canonical; R16+ derives purely
+    from user picks even after auto-advance fills canonical; user
+    Prediction rows survive admin-set winner changes.
+  - `TestReconcileUserPicks` (3 tests) — R32 change orphans R16
+    pick → deleted; R32 picks themselves never auto-deleted; cascade
+    propagates through multiple rounds (R32 → R16 → QF) in one pass.
+  - `TestComputeGroupStandings` (5 tests) — correct picks score
+    round points, zero-pick users included, sort tiebreaker is
+    username asc, admin-edited `ScoringRule.points` reflected,
+    empty group returns `[]`.
+  - `TestBuildUserBracket` (3 tests) — returns all 6 rounds in
+    order, reports lock state, complete-flag requires 32 picks.
+- `apps/bracket/tests/test_views.py` (15 tests across 5 classes):
+  - `TestBracketView` — member 200, non-member 404, group-mode
+    pre-lock redirect to mine.
+  - `TestLeaderboardView` — member 200, non-member 404,
+    unauthenticated redirects to login.
+  - `TestMatchPick` (5 tests) — valid pick creates Prediction,
+    rejected when locked, rejected when submitted, rejected when
+    team not in match, rejected on match with no derived teams.
+  - `TestSubmitBracket` — requires complete bracket (400 when
+    empty), rejected when locked.
+  - `TestUnsubmitBracket` — rejected when not currently submitted,
+    success clears the flag.
+- `apps/bracket/tests/test_commands.py` (11 tests across 3 classes):
+  - `TestSeedBracket` (5) — creates 32 matches, idempotent, wires
+    `feeds_into`/`feeds_as` correctly, SF→FINAL wiring, THIRD left
+    unwired.
+  - `TestSeedScoringRules` (4) — creates 6 rows, default point
+    values match spec, idempotent, admin edits preserved.
+  - `TestSeedTeams` (2) — placeholder team set created, idempotent.
+- `scripts/run_tests.sh` — bash translator from colon-delimited arg
+  to pytest invocation. Validates that `apps/<app>/tests/` exists and
+  that `<file>.py` exists; exits 2 with a clear stderr message if
+  not. Test-name uses pytest `-k <name>` so callers don't need to
+  know which class the test lives in. Executable via `chmod +x`.
+
+**Files modified**
+- `requirements.txt` — 5 new pinned deps (see Dependencies below).
+- `Makefile` — `test` target now shells out to
+  `scripts/run_tests.sh` with `$(filter-out $@,$(MAKECMDGOALS))` so
+  the trailing positional arg gets forwarded. `.DEFAULT` rule
+  underneath uses a shell-time `firstword $(MAKECMDGOALS) = test`
+  check to either no-op the trailing arg or print Make's standard
+  "No rule to make target" error and exit 2.
+
+**Design decisions**
+
+1. **pytest-django over stock Django TestCase.** Steven explicitly
+   picked this despite the recommendation against. Net effect: same
+   test code style (class-based + `setUpTestData`-style fixtures),
+   pytest as the runner, `@pytest.mark.django_db` on each DB-touching
+   class, function-based test setup via fixtures rather than
+   `TestCase.setUp`. Class-based test layout preserved because it
+   matches Django convention and grouped fixtures shared across
+   related tests; pure pytest functions would have multiplied the
+   fixture wiring per test.
+2. **All deps in `requirements.txt`, no `requirements-dev.txt`
+   split.** Adds ~5MB to the prod image; acceptable for the project's
+   single-file dependency convention. Render free tier builds are
+   already fast.
+3. **Project-root `conftest.py`, not per-app.** Both apps share the
+   `bracket` and user-factory fixtures, and Django pytest projects
+   conventionally put cross-cutting fixtures at the root. Per-app
+   conftest files could be added later if app-specific fixtures
+   emerge.
+4. **Factory closures (`make_user`, etc.) rather than parametrized
+   pytest fixtures.** Each call returns a *new* user with a unique
+   auto-incremented email/username, which is what test classes
+   actually want. Parametrize would require explicit naming per
+   call site.
+5. **Single test → `pytest -k <name>` rather than full nodeid.** A
+   user typing `make test bracket:test_models:test_winner_set_pushes...`
+   shouldn't need to know that test lives in
+   `TestMatchAutoAdvancement`. `-k` matches substring against the
+   nodeid path, so bare method names work.
+6. **CLI uses `.DEFAULT` with shell guard, not the `$(EXTRA_GOALS):
+   @:` pattern-rule trick.** First attempt was a conditional rule
+   definition that broke on `bracket:test_models:test_name` because
+   Make parses the colons as target/prereq separators. Switched to
+   `.DEFAULT` (which is a special target, not a pattern, and so
+   doesn't have that parse issue) with a `firstword` check on
+   `$(MAKECMDGOALS)` to distinguish "trailing arg to test" from
+   "user typo'd a goal name".
+
+**Implementation notes**
+- `bracket` fixture calls `call_command("seed_bracket")` instead of
+  hand-building 32 Match rows. Matches the prod seeding path, so any
+  drift between the test setup and what gets deployed is caught here
+  first.
+- `_BracketEnv` helper exposes team handles as attributes
+  (`bracket.usa`, `bracket.mex`, etc.) — readable test code without
+  dict subscripts.
+- `_BracketEnv.lock_now()` pulls R32-1's kickoff into the past
+  rather than mocking `timezone.now`. Cheaper than time mocking, no
+  need for `freezegun` or similar, matches what production does
+  (lock state is recomputed from DB every call).
+- `make_user` defaults: email/username derived from a per-fixture
+  counter (`user1@test.com`, `user2@test.com`, ...) so tests don't
+  collide on uniqueness constraints when they don't need to specify.
+- `compute_group_standings` empty-group test creates a `Group` row
+  without going through `make_group` (which auto-creates an
+  owner membership). Verifies the empty-iter branch is reachable.
+- `bootstrap_superuser` tests use `monkeypatch.setenv` /
+  `monkeypatch.delenv` — pytest's built-in env-var sandbox. No
+  pollution of the actual test process env.
+- `test_views.py::TestSubmitBracket._make_complete` was written as
+  a helper to brute-force a 32-pick complete bracket for testing the
+  positive submit path, but the positive-submit test was deferred
+  (it would have required generating a complete bracket every time
+  the fixture initializes, which is non-trivial). The helper is
+  unused right now — flagging here so a future Phase 6 expansion can
+  pick it up cleanly.
+
+**Smoke tests (the test suite itself, plus the workflow CLI)**
+1. `make test` → 75 passed in 8.10s.
+2. `make test accounts` → 17 passed in 1.61s.
+3. `make test bracket` → 58 passed in 6.81s.
+4. `make test bracket:test_commands` → 11 passed in 0.21s.
+5. `make test bracket:test_models:test_swapping_winner_updates_downstream_slot`
+   → 1 passed, 17 deselected in 0.12s.
+6. `make test nonexistent` → exit 2,
+   `Error: apps/nonexistent/tests/ does not exist`.
+7. `make test bracket:bogus` → exit 2,
+   `Error: apps/bracket/tests/bogus.py does not exist`.
+8. `make typo` → exit 2,
+   `make: *** No rule to make target 'typo'.  Stop.`
+9. `make typo test` → exit 2, same Make error (typo fails before
+   test runs).
+10. `make lint` clean on all new files; `make check` clean.
+
+**Dependencies introduced** (all explicitly approved + pinned)
+
+| Package | Pin | Purpose |
+|---|---|---|
+| `pytest` | 9.1.1 | Test runner |
+| `pytest-django` | 4.12.0 | Django settings/db fixture wiring |
+| `iniconfig` | 2.3.0 | pytest transitive — ini-file parser |
+| `pluggy` | 1.6.0 | pytest transitive — plugin system |
+| `Pygments` | 2.20.0 | pytest transitive — terminal output highlighting |
+
+`pip check` clean post-install. Compatibility verified:
+`pytest-django==4.12.0` requires `pytest>=7.0.0`, satisfied by 9.1.1.
+Both compatible with Python 3.12 and Django 5.2 LTS.
+
+**Pending / deferred**
+- **No CI configured.** Tests run on-demand only. No GitHub Actions,
+  no pre-commit hook, no Render build step running the suite. Phase
+  6 hardening could add a minimal `pytest` step to `render.yaml`
+  buildCommand or a GitHub Actions YAML.
+- **No coverage tooling.** `coverage.py` or `pytest-cov` would let
+  us measure what's actually exercised. Skipped per "no new deps
+  beyond what was asked for" — Steven can add later.
+- **Migration backfill branch (username collision suffix) untested.**
+  Reachable only with synthetic email collisions in
+  `apps/accounts/migrations/0002`; low value to test as-is.
+- **Positive submit-bracket test deferred** — the
+  `_make_complete` helper is in place but no test exercises it. A
+  follow-up could parametrize a complete-bracket scenario and
+  assert the `bracket_submitted` flag transitions correctly.
+- **No view-level test for `match_pick` success state with cascade**
+  — i.e., picking R32-1, then changing it, and asserting the
+  reconcile fires through the view layer (not just at the service
+  layer). The service-layer reconcile is tested; the view-layer
+  glue is not.
+- **The `_BracketEnv` fixture seeds 8 teams** (USA/MEX/CAN/BRA/ESP/
+  POR/JPN/KOR). Tests that want to exercise the full 32-team
+  bracket would need to seed more. Acceptable for current coverage.
+
+**Deviations from `initial-architecture.md`**
+- Plan listed `pytest-django==4.x` as **optional** ("can stick with
+  `manage.py test` if you'd rather not add deps"). Adopted now.
+- Plan didn't anticipate the `make test <app>:<file>:<test>` CLI
+  ergonomics. Net-additive; doesn't change anything documented.
+- The plan's Phase 6 was titled "Hardening + go-live prep" — this
+  pass covers the *test* portion of hardening. R32 draw entry,
+  invite-real-users, and final UX sanity check are still pending
+  Phase 6 work.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
