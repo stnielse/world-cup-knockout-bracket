@@ -1248,3 +1248,187 @@ no logic changes; intentional per Steven's note.
 
 **Untouched (per working contract)**
 - `.env` — never read, edited, or inspected.
+
+---
+
+## Username display pass ✅ 2026-06-25
+
+Small follow-up to Phase 5 before Phase 6 hardening. Steven flagged that
+email-only player labels on the leaderboard "feel lame". The User model
+had `username = None` since Phase 0 (we'd standardized on
+email-as-USERNAME_FIELD); this pass restores a `username` `CharField`,
+makes it mandatory on signup, and routes it to every place the UI used
+to render email-as-display-name.
+
+**Scope shipped**
+- `User.username` is now a `CharField(max_length=100, unique=True,
+  validators=[UnicodeUsernameValidator()])`, mandatory at signup, shown
+  on the leaderboard, in the header nav, and on group-view pick rows.
+- `email` remains the `USERNAME_FIELD` (i.e. the credential users
+  log in with); `username` is purely the display label.
+- Existing users (4 in dev, 1 in prod) get a backfilled username from
+  the local-part of their email via a single in-migration `RunPython`
+  step.
+
+**Files added**
+- `apps/accounts/migrations/0002_user_username.py` — 3-operation
+  migration: AddField nullable + unique → RunPython backfill →
+  AlterField NOT NULL + validator. Splitting into three ops is
+  necessary because (a) `unique=True` + a single default would break
+  the constraint, and (b) `AlterField` to NOT NULL on a populated
+  table fails without a prior backfill.
+
+**Files modified**
+- `apps/accounts/models.py`:
+  - `username = CharField(max_length=100, unique=True,
+    validators=[UnicodeUsernameValidator()], help_text=…)` replacing
+    `username = None`.
+  - `REQUIRED_FIELDS = ["username"]` (Django uses this for
+    `createsuperuser` prompts; it lists fields required *in addition
+    to* `USERNAME_FIELD` and the password).
+  - `__str__` returns `self.username` instead of `self.email` — admin
+    list pages, debug output, and `{{ user }}` in templates now show
+    the friendly label.
+- `apps/accounts/forms.py` — `EmailUserCreationForm.Meta.fields =
+  ("username", "email")`. Username field appears first on the signup
+  page (UX: pick your display name first, then enter the email
+  you'll use to log in).
+- `apps/accounts/admin.py` — `username` added to `list_display` (as
+  the first column), `search_fields`, `fieldsets` (alongside email
+  under the main section), and `add_fieldsets` (so the "add user"
+  page in admin requires it too).
+- `apps/accounts/management/commands/bootstrap_superuser.py` — reads
+  optional `DJANGO_SUPERUSER_USERNAME` env var; falls back to
+  `email.split('@')[0][:100]` if unset. Passed through to
+  `create_superuser()`. Existing prod superuser is unaffected (the
+  command's `User.objects.filter(email=email).exists()` early-return
+  is unchanged); only matters if Steven ever wipes and re-bootstraps.
+- `templates/base.html` — header `<span class="user">{{ user.email }}
+  </span>` → `{{ user.username }}`.
+- `templates/bracket/leaderboard.html` — player cell `{{
+  s.user.get_full_name|default:s.user.email }}` → `{{
+  s.user.username }}`. Per Steven's brief, the goal of mandatory-in-DB
+  was specifically to "eliminate any 'if not User.username display
+  email' fallback in the template", so the fallback is gone.
+- `templates/bracket/_group_bracket.html` — picker `{{
+  pick.user.email|truncatechars:24 }}` → `{{ pick.user.username }}`.
+  Dropped the truncation: usernames are bounded to 100 chars by the
+  model and (in practice) much shorter; CSS can clip if anyone really
+  goes long.
+- `apps/bracket/services.py: compute_group_standings` — sort
+  tiebreaker `user.email.lower()` → `user.username.lower()`. Docstring
+  updated to match.
+
+**Design decisions**
+
+1. **Case-sensitive uniqueness.** Steven explicitly picked this when
+   offered the case-sensitive vs case-insensitive choice. Simpler
+   (just `unique=True` at the DB level; no functional `LOWER()` index
+   needed); friends can pick whatever capitalization they want. Side
+   effect: "Steven" and "steven" can coexist as distinct users,
+   technically allowing impersonation-via-capitalization. Acceptable
+   for the friend-pool scale.
+2. **Backfill from email local-part, not a prompt.** Existing rows
+   needed *something* in the new column. Three options were
+   considered: (a) auto-derive from email prefix in a data migration,
+   (b) prompt at deploy time, (c) leave nullable forever and check in
+   the templates. Picked (a) — deterministic, no manual step on
+   deploy, falls out of the model's natural mapping. Steven can
+   change his own username via admin afterward.
+3. **Mandatory in the DB, not just in the form.** The whole point of
+   the change per Steven's brief: "make it mandatory, not optional,
+   so as to eliminate any 'if not User.username display email' in the
+   CSS logic." The AlterField step at the end of the migration
+   enforces NOT NULL at the schema level — no `null=True` left around
+   for some future code path to slip through.
+4. **No `DJANGO_SUPERUSER_USERNAME` added to `render.yaml`.** The
+   project-bracket-app memory notes that Render's
+   `sync: false` env vars only get the dashboard prompt at *initial
+   Blueprint creation* — adding a new one to `render.yaml` later
+   means Steven has to set it manually in the Render dashboard. To
+   avoid that one-time hop on next deploy, bootstrap_superuser
+   instead derives the username from email prefix when the env var
+   is unset. The env var is supported as an opt-in if Steven ever
+   does want explicit control.
+5. **Used `UnicodeUsernameValidator` (Django's standard).** Allows
+   letters/digits/`./_/@/+/-`. Doesn't allow spaces, slashes, or
+   most punctuation. Same set used by Django's stock User model — no
+   surprises if Steven (or anyone he sends here) has seen Django
+   forms before.
+6. **`__str__` returns username, not email.** Cosmetic for now;
+   matters for admin list pages and `repr()` output during debugging
+   (cleaner labels in autocomplete dropdowns, error messages, log
+   lines).
+
+**Implementation notes**
+- The migration's `_safe_base()` helper strips characters not in
+  `UnicodeUsernameValidator`'s regex before deriving the username
+  base. Email local-parts can contain `~`, `*`, `!`, etc.
+  (technically valid per RFC 5321) which would fail the post-AlterField
+  validator. Defensive belt-and-suspenders — none of the 4 existing
+  users tripped it.
+- Collision handling in the backfill: numeric suffix appended within
+  the 100-char limit (`base[:100 - len(suffix)] + suffix`). In
+  practice no collisions on this DB; tested in isolation but the
+  branch is unexercised.
+- `bootstrap_superuser` uses `or` rather than checking env-var
+  presence explicitly — `DJANGO_SUPERUSER_USERNAME=""` is treated the
+  same as unset (both fall through to the email-prefix derivation).
+  Intentional: an empty env var almost certainly means "I forgot to
+  set this" rather than "I want a zero-length username".
+
+**Smoke tests (all shell-based via Django Client)**
+1. Signup with no username → 200 status, form shows "This field is
+   required" error, no user created in DB.
+2. Signup with valid username → 302 redirect (success), user created
+   with the entered username.
+3. Signup with duplicate username → 200, form shows "already exists"
+   uniqueness error, no user created.
+4. Signup with invalid characters (`no spaces!`) → 200, form shows
+   validator error.
+5. Leaderboard page renders usernames (e.g. `sarah`, not
+   `sarah@test.com`) and email strings are absent from the rendered
+   HTML.
+6. Header nav (`base.html`) renders username when logged in, no
+   email anywhere.
+7. Group view (`?view=group`, post-lock) renders usernames in the
+   group-picks list; no email strings anywhere on the page.
+8. `python manage.py check` clean; `python manage.py makemigrations
+   accounts --dry-run` reports "No changes detected" (model matches
+   the migration state).
+9. Migration applied cleanly on dev DB:
+   `s.conwaynielsen@gmail.com` → `s.conwaynielsen`, `sarah@test.com`
+   → `sarah`, etc. (4 users, 0 collisions).
+
+**Pending / deferred**
+- **Steven's prod superuser will end up with username
+  `s.conwaynielsen`** after the migration backfills on first prod
+  deploy. If he wants a different display name, the simplest path is
+  to edit it via `/admin/` after the deploy (no DB intervention, no
+  re-bootstrap needed).
+- **No update to `project-bracket-app` memory.** The User-model
+  schema is now slightly different from what Phase 0 documented, but
+  the memory file mostly talks about higher-level architecture (the
+  email-as-USERNAME_FIELD decision is still correct — username is
+  display-only). If this turns out to confuse future-me, worth
+  adding a line.
+- **No tests for the migration's backfill collision branch.** The
+  branch is reachable only with email local-parts that collide
+  after sanitization (e.g., two users with `john@a.com` and
+  `john@b.com`). Phase 6 test pass can cover if Steven wants
+  belt-and-suspenders.
+
+**Dependencies introduced**
+None. `UnicodeUsernameValidator` and `UserCreationForm` are both
+already-imported Django stdlib pieces.
+
+**Deviations from `initial-architecture.md`**
+The plan never spec'd a username field — it standardized on
+"email as USERNAME_FIELD" in Phase 0 and never revisited. This pass
+is additive (username is for display only; email is still the
+credential), so no contradiction, but it is a *new* product decision
+not anticipated in the original architecture doc. Worth a one-line
+note there if/when we do a Phase 6 doc-sweep.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
