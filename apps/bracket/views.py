@@ -5,7 +5,14 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .forms import GroupCreateForm, GroupJoinForm
-from .models import GroupMembership, Match, Prediction, Round, Team, is_tournament_locked
+from .models import (
+    GroupMembership,
+    Match,
+    Prediction,
+    Round,
+    Team,
+    is_tournament_locked,
+)
 from .services import (
     build_group_bracket,
     build_user_bracket,
@@ -185,7 +192,11 @@ def leaderboard_view(request, group_id):
             last_points = s["total_points"]
         s["rank"] = rank
         s["round_cells"] = [
-            {"label": col["label"], "correct": s["per_round"].get(col["code"], 0), "total": col["total"]}
+            {
+                "label": col["label"],
+                "correct": s["per_round"].get(col["code"], 0),
+                "total": col["total"],
+            }
             for col in round_columns
         ]
 
