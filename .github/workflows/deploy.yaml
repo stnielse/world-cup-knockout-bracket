@@ -1,0 +1,7 @@
+name: Test and then Deploy to Render
+
+on:
+  push:
+    branches:
+      - main
+
