@@ -1860,3 +1860,223 @@ Both compatible with Python 3.12 and Django 5.2 LTS.
 - `render.yaml` — no env-var or buildCommand changes needed. The
   `TIME_ZONE` switch is in settings, not env. The codified R32-1
   kickoff runs via the existing `seed_bracket` buildCommand step.
+
+
+## R32 draw load + display-name templates ✅ 2026-06-27 (live verified same day)
+
+T-1 day to kickoff. The FIFA R32 draw locked in, so this milestone
+closes the "R32 draw entry" item from Phase 6 hardening (project memory).
+Two threads landed together:
+1. Encode the canonical 32-team WC26 roster + 16 R32 matchups as
+   code-managed seed data (parallel to how R32-1 kickoff was already
+   code-managed).
+2. Fix the match-card templates to render display names instead of
+   FIFA 3-letter codes — bug caught only after prod deploy.
+
+**Why code-managed instead of admin-entered**: the FIFA R32 draw is
+fixed once announced. Encoding it in source keeps prod immune to admin
+slip-ups, gives local/test environments a fully-populated R32 out of
+the box (no manual entry per dev box), and makes the matchup table
+greppable / diffable. Same justification as R32-1 kickoff from the
+prior milestone. R16+ home/away stays cascade-driven (via
+`_advance_winner` from `Match.save`) because those slots aren't known
+until results come in.
+
+**What shipped**
+
+1. **`seed_teams.py` expanded from 3-team placeholder to full 32-team
+   roster.** Alphabetical by display name (matches
+   `Team.Meta.ordering`). Each entry: `(FIFA code, display name, flag
+   emoji as \U escape pair)`. Six judgment calls baked in (see
+   "Decisions worth remembering" below).
+2. **`seed_bracket.py` gained `R32_MATCHUPS`** — a 16-entry dict
+   mapping slot → `(home_code, away_code)`. `handle()` now resolves
+   teams via `Team.objects.in_bulk(..., field_name="code")` and
+   force-sets `home_team`/`away_team` on each R32 match. Idempotent
+   re-sync if matchups ever change.
+3. **New `CommandError` if `seed_teams` hasn't run.** seed_bracket
+   computes the set of required FIFA codes from `R32_MATCHUPS` and
+   raises with the missing codes listed if any aren't in the DB. Avoids
+   cryptic `KeyError` downstream. Updated docstring explicitly states
+   the seed_teams prereq.
+4. **stdout now reports `matchups-synced` count** alongside the
+   existing `kickoff-synced`. First-time prod run logged
+   `16 matchups-synced`, `1 kickoff-synced`.
+5. **Test updates**:
+   - `TestSeedBracket` gained an `autouse=True` fixture
+     `_seed_teams` that calls `seed_teams` before each test in the
+     class. Without it the new CommandError would fire in every test.
+   - Three new tests: `test_r32_matchups_force_set` (spot-checks
+     R32-1=GER/PAR and R32-16=COL/GHA), `test_r32_matchups_resync_after_admin_edit`
+     (swaps home/away, re-runs seed, asserts reset), and
+     `test_aborts_loudly_without_teams` (deletes all teams, expects
+     CommandError matching "seed_teams").
+   - `TestSeedTeams.test_creates_placeholder_teams` renamed to
+     `test_creates_full_roster` — asserts count == 32 and spot-checks
+     `{USA, CAN, MEX, GER, BRA, ENG}.issubset(codes)`. Old test
+     comment referenced "3 placeholder host nations" which was now
+     stale.
+6. **Shared `conftest.py` rework**: the project-wide `bracket`
+   fixture now calls `seed_teams` *before* `seed_bracket` (the old
+   order would now hit the new CommandError). The fixture's previous
+   8-team inline `TEAM_FIXTURES` (USA/MEX/CAN/BRA/ESP/POR/JPN/KOR
+   created via `Team.objects.create`) is replaced with
+   `FIXTURE_TEAM_CODES`, a 7-code list that pulls teams from
+   seed_teams's roster via `Team.objects.get(code=...)`. KOR (South
+   Korea) was dropped entirely — it was provisioned for SF
+   cascade tests that never actually used it (grep confirmed
+   `self.kor` was set on `_BracketEnv` but never referenced from any
+   test). The R32-1/R32-2 home/away overrides (USA/MEX, CAN/BRA) and
+   the kickoff override (T+1 day) still happen — they override
+   seed_bracket's GER/PAR/FRA/SWE force-set so existing tests stay
+   stable.
+7. **Template fix: `team.code` → `team.name`** in seven spots across
+   two templates. Bug surfaced only after the first prod deploy when
+   Steven hit the live URL and saw "GER" / "PAR" / "BIH" on match
+   cards instead of "Germany" / "Paraguay" / "Bosnia & Herz.". The
+   tooltip `title=` attribute already used `.name`; the visible card
+   text was using `.code` for tighter card width, but the
+   judgment-call abbreviations in seed_teams (Bosnia & Herz., DR
+   Congo) made the full names compact enough.
+   - `_match_card.html`: lines 16, 23, 31, 39 (home/away on
+     interactive + read-only card variants).
+   - `_group_bracket.html`: lines 18, 22 (home/away on group view),
+     line 33 (each member's pick label).
+8. **Prod load** ran from laptop via local-against-remote-DB
+   workaround. Output recorded for posterity:
+   - `seed_teams`: `Seed complete: 29 created, 3 updated, 32 total`
+     (the 3 updates are the Phase-3 USA/CAN/MEX placeholders being
+     refreshed to the canonical display names — though Mexico's
+     display name is unchanged at "Mexico" so technically it's a
+     no-op write; harmless).
+   - `seed_bracket`: `Bracket seed: 0 created, 0 round-synced, 0
+     (re)wired, 1 kickoff-synced, 16 matchups-synced, 32 total
+     matches.` (32-match topology already existed from Phase 3; R32-1
+     kickoff was sitting on the 2099 placeholder until this run; all
+     16 matchups set for the first time.)
+
+**Files touched**
+- `apps/bracket/management/commands/seed_teams.py`
+- `apps/bracket/management/commands/seed_bracket.py`
+- `apps/bracket/tests/test_commands.py`
+- `conftest.py`
+- `templates/bracket/_match_card.html`
+- `templates/bracket/_group_bracket.html`
+- `apps/bracket/R32.md` (new — human-readable matchup ledger kept as
+  a historical artifact; intentionally not authoritative)
+
+**Decisions worth remembering**
+
+- **R32.md as ledger, not source of truth.** R32.md lists the 16
+  matchups with team display names — easy to eyeball against the
+  official draw. But it's not parsed or read by code. Codes + flags
+  live in `seed_teams.TEAMS`; matchups live in
+  `seed_bracket.R32_MATCHUPS`. The split keeps Team identity attached
+  to the Team model (its natural home) and lets R32.md stay a thin,
+  delete-able artifact post-tournament.
+- **FIFA 3-letter codes, not ISO 3166-1 alpha-3.** Where they diverge
+  the FIFA convention wins: `GER` (not DEU), `NED` (not NLD), `SUI`
+  (not CHE), `RSA` (not ZAF), `POR` (not PRT), `CRO` (not HRV), `ALG`
+  (not DZA), `PAR` (not PRY). Flag emoji escapes use the ISO 3166-1
+  alpha-2 regional-indicator pairs (separate from the FIFA codes —
+  e.g. Germany = FIFA `GER` + flag emoji from `DE`).
+- **England flag = 🇬🇧 (Union Jack / GB), not the subdivision
+  flag 🏴󠁧󠁢󠁥󠁮󠁧󠁿.** The subdivision flag (`U+1F3F4` + tag sequence for
+  "gb-eng") is the technically-correct representation but renders
+  inconsistently across older Android, Linux, and some Windows
+  builds — falls back to a plain black flag. The UK Union Jack
+  renders universally. Steven explicitly chose render-reliability
+  over technical correctness here.
+- **Display name calls (Steven's per-team picks)**:
+  - `USA` for "USA" (not "United States" — matches R32.md, tighter
+    on cards).
+  - `Bosnia & Herz.` (16-char "Bosnia and Herzegovina" shortened).
+  - `DR Congo` (FIFA short form; full "Democratic Republic of the
+    Congo" too long for cards).
+  - `Cape Verde` (English) over `Cabo Verde` (FIFA-official since
+    2013).
+  - `Ivory Coast` over `Côte d'Ivoire` (FIFA-official) — English
+    readability.
+- **Alphabetical-by-display-name ordering in TEAMS list**: matches
+  `Team.Meta.ordering = ["name"]`, easy to scan or grep, easy to
+  slot in WC 2030 additions later.
+- **CommandError on missing teams > silent skip**: explicit failure
+  with the missing codes listed forces correct order
+  (`seed_teams` → `seed_bracket`). A silent "skip if missing" mode
+  could ship a half-wired bracket to prod and we'd never notice.
+- **Bug caught post-deploy was a missing-coverage gap, not a logic
+  error.** All 86+ tests passed, but no test exercised
+  template rendering of team names on a match card. Worth filing
+  mentally as "if we ever add view rendering tests, assert the team
+  name string appears in the response HTML."
+
+**Operational notes**
+
+- **prod.py hard-requires four env vars** for `python-dotenv` /
+  base-settings loading: `DATABASE_URL`, `SECRET_KEY`,
+  `ALLOWED_HOSTS`, `RESEND_API_KEY`. The local-against-remote-DB
+  workaround needs all four set. `SECRET_KEY` / `ALLOWED_HOSTS` /
+  `RESEND_API_KEY` can be dummy values for management commands
+  (they're not used by seed commands; only `DATABASE_URL` is). The
+  pattern used:
+  ```
+  export SECRET_KEY='not-used-by-seed'
+  export ALLOWED_HOSTS='localhost'
+  export RESEND_API_KEY='not-used-by-seed'
+  export DATABASE_URL='<Render external DB URL>'
+  export DJANGO_SETTINGS_MODULE=config.settings.prod
+  .venv/bin/python manage.py seed_teams
+  .venv/bin/python manage.py seed_bracket
+  unset SECRET_KEY ALLOWED_HOSTS RESEND_API_KEY DATABASE_URL DJANGO_SETTINGS_MODULE
+  ```
+  `python-dotenv` is invoked with `override=False`, so `export`-set
+  values win over anything in `.env`.
+- **Local pre-seed cleanup** (one-time): when running the new
+  `seed_bracket` against a dev DB that had stale R16/QF/winner state
+  from earlier manual testing, the fastest reset was
+  `Match.objects.all().update(home_team=None, away_team=None, winner=None)`
+  followed by `seed_bracket`. Avoid `.save()`-looped clears because
+  `_advance_winner` re-fires mid-loop on every save.
+
+**Verification**
+
+1. `make test` clean across the whole repo (~88+ tests after the
+   3 new ones).
+2. Local smoke test on `runserver` (against SQLite reset to clean
+   state): all 16 R32 cards populated, England shows 🇬🇧, DR Congo
+   shows 🇨🇩 (not 🇨🇬), R32-1 kickoff visible in browser-local tz,
+   R32-2..16 hide the kickoff via the year-2099 guard, no layout
+   regressions on the long-name cards (USA vs Bosnia & Herz.,
+   England vs DR Congo).
+3. CI green on push (~30-45s, Mode B Render deploy auto-fires).
+4. Live URL verified post-deploy. Initial check surfaced the
+   `.code`-vs-`.name` bug; template fix pushed, CI re-ran, second
+   deploy verified — all 16 R32 matchups now render display names
+   with flags on the live bracket.
+
+**Pending / deferred**
+
+- **R32-2..FINAL kickoff entry** — still admin-managed. FIFA schedule
+  needs to be entered per match (or all at once). Templates hide the
+  time via the 2099-year guard until a real kickoff is entered, so
+  cards display correctly without it. Not blocking for go-live.
+- **R32.md retention**: kept in `apps/bracket/` as an artifact. Safe
+  to delete after the tournament ends 2026-07-19.
+- **View-rendering test coverage**: no test asserts that the bracket
+  HTML contains a team name string. The `.code`/`.name` bug would
+  have been caught earlier with even a one-line assertion. Not a
+  blocker; worth a follow-up if Phase 6 hardening continues.
+- **Resend domain flip**: still deferred (Steven hasn't purchased
+  domain). Sandbox mode covers personal-circle invites for now.
+
+**Deviations from `initial-architecture.md`**
+- Plan listed the R32 draw as fully admin-entered. Now: code-managed
+  in `seed_bracket.py` + `seed_teams.py`. Net-additive (one dict + one
+  force-sync loop) and reversible. Plan file not updated; the
+  seed_bracket docstring is the authoritative reference.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
+- `render.yaml` — no Blueprint / env-var / buildCommand changes. Prod
+  seed ran entirely from laptop via existing infra.
+- `requirements.txt` — no new dependencies.
