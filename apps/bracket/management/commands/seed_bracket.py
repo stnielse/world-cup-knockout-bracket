@@ -7,27 +7,36 @@ What this command sets:
 - feeds_into / feeds_as on every match that advances a winner: each pair of
   sibling matches feeds into a single parent match (odd index → home, even →
   away).
+- home_team / away_team for all 16 R32 matches, from R32_MATCHUPS below.
+- R32-1.kickoff_at, force-set to R32_1_KICKOFF.
 - THIRD-place is intentionally left unwired. Its participants are the *losers*
   of SF-1 and SF-2, which the current model does not express. After the SFs
   are played, set THIRD's home_team / away_team manually in admin.
 
-What this command does NOT set (leave for admin / tournament data entry):
-- home_team, away_team — known after the R32 draw (~June 27).
+What this command does NOT set (populated elsewhere):
+- home_team / away_team for R16/QF/SF/FINAL — populated by the winner-
+  advancement cascade (Match.save → _advance_winner) as matches are played.
 - kickoff_at for R32-2..FINAL — known from the FIFA schedule. New rows get a
   far-future placeholder so the lock check won't fire; re-running this seed
-  will not overwrite a real kickoff already entered.
+  will not overwrite a real kickoff already entered. Templates hide the time
+  while the year is 2099.
 - winner — set as matches are played.
 
-Exception: R32-1 kickoff IS code-managed. Because R32-1.kickoff_at drives the
-global tournament lock (kickoff - 5 min), it must be reproducible across local
-/ staging / prod and immune to a stray admin edit. The seed force-sets it to
-R32_1_KICKOFF on every run.
+Why R32-1 kickoff AND the R32 matchups are code-managed: both are fixed once
+the FIFA draw is locked, and both must be reproducible across local / staging
+/ prod. Encoding them here keeps prod immune to stray admin edits and gives
+fresh environments a fully-populated R32 out of the box. The seed force-sets
+both on every run.
+
+Prereq: run `seed_teams` first. seed_bracket aborts with a CommandError if any
+team code referenced in R32_MATCHUPS is missing from the DB.
 
 Idempotent: re-running this command does not duplicate matches and does not
 clobber tournament data. It will re-wire feeds_into / feeds_as if the topology
-in this file changes.
+in this file changes, and re-sync R32 home/away if R32_MATCHUPS changes.
 
 Run:
+    .venv/bin/python manage.py seed_teams
     .venv/bin/python manage.py seed_bracket
 """
 
@@ -35,9 +44,9 @@ import itertools
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
-from apps.bracket.models import FeedAs, Match, Round
+from apps.bracket.models import FeedAs, Match, Round, Team
 
 # Far-future placeholder so the tournament global lock never fires until a
 # real kickoff is entered. Year 2099 is deliberately absurd — easy to
@@ -47,6 +56,26 @@ PLACEHOLDER_KICKOFF = datetime(2099, 12, 31, tzinfo=UTC)
 # R32-1 is the WC26 opener: Sunday 2026-06-28 13:00 America/Denver (Mountain).
 # This drives tournament_lock_time() = kickoff - 5 min.
 R32_1_KICKOFF = datetime(2026, 6, 28, 13, 0, tzinfo=ZoneInfo("America/Denver"))
+
+# Final FIFA R32 draw. Codes match seed_teams.TEAMS (FIFA 3-letter).
+R32_MATCHUPS: dict[str, tuple[str, str]] = {
+    "R32-1": ("GER", "PAR"),
+    "R32-2": ("FRA", "SWE"),
+    "R32-3": ("RSA", "CAN"),
+    "R32-4": ("NED", "MAR"),
+    "R32-5": ("POR", "CRO"),
+    "R32-6": ("ESP", "AUT"),
+    "R32-7": ("USA", "BIH"),
+    "R32-8": ("BEL", "SEN"),
+    "R32-9": ("BRA", "JPN"),
+    "R32-10": ("CIV", "NOR"),
+    "R32-11": ("MEX", "ECU"),
+    "R32-12": ("ENG", "COD"),
+    "R32-13": ("ARG", "CPV"),
+    "R32-14": ("AUS", "EGY"),
+    "R32-15": ("SUI", "ALG"),
+    "R32-16": ("COL", "GHA"),
+}
 
 
 # All 32 slots in tournament order. Slot names are the canonical identifiers
@@ -129,10 +158,31 @@ class Command(BaseCommand):
             r32_1.save(update_fields=["kickoff_at"])
             kickoff_synced = 1
 
+        required_codes = {c for pair in R32_MATCHUPS.values() for c in pair}
+        teams_by_code = Team.objects.in_bulk(required_codes, field_name="code")
+        missing = required_codes - teams_by_code.keys()
+        if missing:
+            raise CommandError(
+                f"seed_bracket requires teams to exist first. Missing codes: "
+                f"{sorted(missing)}. Run `python manage.py seed_teams`."
+            )
+
+        matchups_synced = 0
+        for slot, (home_code, away_code) in R32_MATCHUPS.items():
+            m = matches[slot]
+            home = teams_by_code[home_code]
+            away = teams_by_code[away_code]
+            if m.home_team_id != home.id or m.away_team_id != away.id:
+                m.home_team = home
+                m.away_team = away
+                m.save(update_fields=["home_team", "away_team"])
+                matchups_synced += 1
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Bracket seed: {created} created, {round_synced} round-synced, "
                 f"{rewired} (re)wired, {kickoff_synced} kickoff-synced, "
+                f"{matchups_synced} matchups-synced, "
                 f"{Match.objects.count()} total matches."
             )
         )

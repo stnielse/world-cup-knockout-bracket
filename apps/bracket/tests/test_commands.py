@@ -3,12 +3,18 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 
 from apps.bracket.models import FeedAs, Match, ScoringRule, Team
 
 
 @pytest.mark.django_db
 class TestSeedBracket:
+    @pytest.fixture(autouse=True)
+    def _seed_teams(self, db):
+        # seed_bracket now requires the R32 team roster to exist.
+        call_command("seed_teams")
+
     def test_creates_32_matches_first_run(self, db):
         call_command("seed_bracket")
         assert Match.objects.count() == 32
@@ -65,6 +71,31 @@ class TestSeedBracket:
         r32_2 = Match.objects.get(slot="R32-2")
         assert r32_2.kickoff_at.year == 2099
 
+    def test_r32_matchups_force_set(self, db):
+        call_command("seed_bracket")
+        r32_1 = Match.objects.get(slot="R32-1")
+        assert r32_1.home_team.code == "GER"
+        assert r32_1.away_team.code == "PAR"
+        r32_16 = Match.objects.get(slot="R32-16")
+        assert r32_16.home_team.code == "COL"
+        assert r32_16.away_team.code == "GHA"
+
+    def test_r32_matchups_resync_after_admin_edit(self, db):
+        call_command("seed_bracket")
+        r32_1 = Match.objects.get(slot="R32-1")
+        # Swap home/away — simulates an admin mistake.
+        r32_1.home_team, r32_1.away_team = r32_1.away_team, r32_1.home_team
+        r32_1.save(update_fields=["home_team", "away_team"])
+        call_command("seed_bracket")
+        r32_1.refresh_from_db()
+        assert r32_1.home_team.code == "GER"
+        assert r32_1.away_team.code == "PAR"
+
+    def test_aborts_loudly_without_teams(self, db):
+        Team.objects.all().delete()
+        with pytest.raises(CommandError, match="seed_teams"):
+            call_command("seed_bracket")
+
 
 @pytest.mark.django_db
 class TestSeedScoringRules:
@@ -98,11 +129,12 @@ class TestSeedScoringRules:
 
 @pytest.mark.django_db
 class TestSeedTeams:
-    def test_creates_placeholder_teams(self, db):
+    def test_creates_full_roster(self, db):
         call_command("seed_teams")
-        # Current TEAMS list contains 3 placeholder host nations
+        assert Team.objects.count() == 32
         codes = set(Team.objects.values_list("code", flat=True))
-        assert {"USA", "CAN", "MEX"}.issubset(codes)
+        # Spot-check a few host + qualifier entries.
+        assert {"USA", "CAN", "MEX", "GER", "BRA", "ENG"}.issubset(codes)
 
     def test_idempotent_on_second_run(self, db):
         call_command("seed_teams")

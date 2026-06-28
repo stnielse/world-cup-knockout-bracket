@@ -1,11 +1,12 @@
 """Shared pytest fixtures.
 
 Two layers:
-- `bracket` fixture: seeds the 32-match knockout structure and a handful of
-  Team rows (USA/MEX/CAN/BRA/ESP/POR/JPN/KOR — enough to populate two
-  R32 matches plus both SFs for advancement-cascade tests). R32-1's
-  `kickoff_at` is set to 1 day in the future so `is_tournament_locked()`
-  returns False by default; individual tests can override.
+- `bracket` fixture: seeds the canonical 32-team roster (via seed_teams) and
+  the 32-match knockout structure (via seed_bracket), then overrides
+  R32-1/R32-2 with USA-vs-MEX and CAN-vs-BRA so existing tests stay stable
+  against seed_bracket's canonical GER-vs-PAR / FRA-vs-SWE force-set.
+  R32-1.kickoff_at is set 1 day in the future so `is_tournament_locked()`
+  returns False by default; tests can override via `lock_now()`.
 - helper factories `make_user`, `make_group`, `make_membership` for cheap
   per-test object creation without re-stamping the bracket structure.
 """
@@ -19,27 +20,16 @@ from django.utils import timezone
 from apps.accounts.models import User
 from apps.bracket.models import Group, GroupMembership, Match, Team
 
-TEAM_FIXTURES = [
-    ("USA", "United States", "\U0001f1fa\U0001f1f8"),
-    ("MEX", "Mexico", "\U0001f1f2\U0001f1fd"),
-    ("CAN", "Canada", "\U0001f1e8\U0001f1e6"),
-    ("BRA", "Brazil", "\U0001f1e7\U0001f1f7"),
-    ("ESP", "Spain", "\U0001f1ea\U0001f1f8"),
-    ("POR", "Portugal", "\U0001f1f5\U0001f1f9"),
-    ("JPN", "Japan", "\U0001f1ef\U0001f1f5"),
-    ("KOR", "South Korea", "\U0001f1f0\U0001f1f7"),
-]
+FIXTURE_TEAM_CODES = ["USA", "MEX", "CAN", "BRA", "ESP", "POR", "JPN"]
 
 
 @pytest.fixture
 def bracket(db):
     """Seed bracket + teams + R32-1 kickoff. Returns helper namespace."""
+    call_command("seed_teams")
     call_command("seed_bracket")
     call_command("seed_scoring_rules")
-    teams = {
-        code: Team.objects.create(code=code, name=name, flag_emoji=flag)
-        for code, name, flag in TEAM_FIXTURES
-    }
+    teams = {code: Team.objects.get(code=code) for code in FIXTURE_TEAM_CODES}
     r32_1 = Match.objects.get(slot="R32-1")
     r32_1.home_team = teams["USA"]
     r32_1.away_team = teams["MEX"]
@@ -63,7 +53,6 @@ class _BracketEnv:
         self.esp = teams["ESP"]
         self.por = teams["POR"]
         self.jpn = teams["JPN"]
-        self.kor = teams["KOR"]
 
     def match(self, slot):
         return Match.objects.get(slot=slot)
