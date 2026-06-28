@@ -13,14 +13,14 @@
                 title="{{ entry.home.name }}"
                 {% if not entry.pickable %}disabled{% endif %}>
                 <span class="flag">{{ entry.home.flag_emoji }}</span>
-                <span class="team-name">{{ entry.home.code }}</span>
+                <span class="team-name">{{ entry.home.name }}</span>
             </button>
             <button type="submit" name="team" value="{{ entry.away.id }}"
                 class="team{% if entry.pick.id == entry.away.id %} picked{% endif %}"
                 title="{{ entry.away.name }}"
                 {% if not entry.pickable %}disabled{% endif %}>
                 <span class="flag">{{ entry.away.flag_emoji }}</span>
-                <span class="team-name">{{ entry.away.code }}</span>
+                <span class="team-name">{{ entry.away.name }}</span>
             </button>
         </form>
     {% elif entry.home or entry.away %}
@@ -28,7 +28,7 @@
             <div class="team-readonly{% if entry.home %} known{% else %} unknown{% endif %}">
                 {% if entry.home %}
                     <span class="flag">{{ entry.home.flag_emoji }}</span>
-                    <span class="team-name">{{ entry.home.code }}</span>
+                    <span class="team-name">{{ entry.home.name }}</span>
                 {% else %}
                     <span class="placeholder-text">waiting…</span>
                 {% endif %}
@@ -36,7 +36,7 @@
             <div class="team-readonly{% if entry.away %} known{% else %} unknown{% endif %}">
                 {% if entry.away %}
                     <span class="flag">{{ entry.away.flag_emoji }}</span>
-                    <span class="team-name">{{ entry.away.code }}</span>
+                    <span class="team-name">{{ entry.away.name }}</span>
                 {% else %}
                     <span class="placeholder-text">waiting…</span>
                 {% endif %}

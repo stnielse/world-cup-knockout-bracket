@@ -15,11 +15,11 @@
                         {% if entry.home and entry.away %}
                             <div class="teams-display">
                                 <span class="team{% if entry.winner.id == entry.home.id %} team-winner{% endif %}">
-                                    {{ entry.home.flag_emoji }} {{ entry.home.code }}
+                                    {{ entry.home.flag_emoji }} {{ entry.home.name }}
                                 </span>
                                 <span class="vs">vs</span>
                                 <span class="team{% if entry.winner.id == entry.away.id %} team-winner{% endif %}">
-                                    {{ entry.away.flag_emoji }} {{ entry.away.code }}
+                                    {{ entry.away.flag_emoji }} {{ entry.away.name }}
                                 </span>
                             </div>
                         {% else %}
@@ -30,7 +30,7 @@
                                 {% for pick in entry.picks %}
                                     <li class="{% if entry.winner.id == pick.team.id %}pick-correct{% elif entry.winner %}pick-incorrect{% endif %}">
                                         <span class="picker">{{ pick.user.username }}</span>
-                                        <span class="picked">{{ pick.team.code }}</span>
+                                        <span class="picked">{{ pick.team.name }}</span>
                                     </li>
                                 {% endfor %}
                             </ul>
