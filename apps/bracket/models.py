@@ -108,9 +108,7 @@ class Match(models.Model):
                 logger.info("winner cleared: match=%s", self.slot)
             else:
                 winner_code = self.winner.code if self.winner else "?"
-                logger.info(
-                    "winner set: match=%s team=%s", self.slot, winner_code
-                )
+                logger.info("winner set: match=%s team=%s", self.slot, winner_code)
             _advance_winner(self)
 
 

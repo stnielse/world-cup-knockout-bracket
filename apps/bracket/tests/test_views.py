@@ -95,7 +95,8 @@ class TestMatchPick:
         with caplog.at_level(logging.WARNING, logger="apps.bracket.views"):
             client.post(self._url(group.id, r32_1.id), {"team": bracket.usa.id})
         warnings = [
-            r for r in caplog.records
+            r
+            for r in caplog.records
             if r.name == "apps.bracket.views" and r.levelno == logging.WARNING
         ]
         assert warnings, "expected a WARNING from apps.bracket.views"
