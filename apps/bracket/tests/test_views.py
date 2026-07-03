@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from apps.bracket.models import Match, Prediction
@@ -81,6 +83,24 @@ class TestMatchPick:
         r32_1 = bracket.match("R32-1")
         resp = client.post(self._url(group.id, r32_1.id), {"team": bracket.usa.id})
         assert resp.status_code == 400
+
+    def test_pick_rejected_when_locked_logs_warning(
+        self, bracket, client, make_user, make_group, caplog
+    ):
+        owner = make_user()
+        group = make_group(owner=owner)
+        bracket.lock_now()
+        client.force_login(owner)
+        r32_1 = bracket.match("R32-1")
+        with caplog.at_level(logging.WARNING, logger="apps.bracket.views"):
+            client.post(self._url(group.id, r32_1.id), {"team": bracket.usa.id})
+        warnings = [
+            r for r in caplog.records
+            if r.name == "apps.bracket.views" and r.levelno == logging.WARNING
+        ]
+        assert warnings, "expected a WARNING from apps.bracket.views"
+        assert "pick rejected" in warnings[0].getMessage()
+        assert "locked=True" in warnings[0].getMessage()
 
     def test_pick_rejected_when_submitted(self, bracket, client, make_user, make_group):
         owner = make_user()

@@ -9,9 +9,13 @@ Edit the TEAMS list below to add / remove / correct entries, then re-run:
     .venv/bin/python manage.py seed_teams
 """
 
+import logging
+
 from django.core.management.base import BaseCommand
 
 from apps.bracket.models import Team
+
+logger = logging.getLogger(__name__)
 
 # WC 2026 R32 roster, alphabetical by display name (matches Team.Meta.ordering).
 # Each entry: (FIFA 3-letter code, display name, flag emoji).
@@ -69,9 +73,9 @@ class Command(BaseCommand):
             else:
                 updated += 1
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Seed complete: {created} created, {updated} updated, "
-                f"{Team.objects.count()} total."
-            )
+        summary = (
+            f"Seed complete: {created} created, {updated} updated, "
+            f"{Team.objects.count()} total."
         )
+        self.stdout.write(self.style.SUCCESS(summary))
+        logger.info(summary)

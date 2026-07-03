@@ -1,7 +1,11 @@
+import logging
+
 from django.contrib.auth import login
 from django.shortcuts import redirect, render
 
 from .forms import EmailUserCreationForm
+
+logger = logging.getLogger(__name__)
 
 
 def signup(request):
@@ -10,6 +14,7 @@ def signup(request):
         if form.is_valid():
             user = form.save()
             login(request, user)
+            logger.info("signup: user=%s", user.username)
             return redirect("my_groups")
     else:
         form = EmailUserCreationForm()

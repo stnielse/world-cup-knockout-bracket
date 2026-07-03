@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
@@ -19,6 +21,8 @@ from .services import (
     compute_group_standings,
     reconcile_user_picks,
 )
+
+logger = logging.getLogger(__name__)
 
 # Total matches per round — used by the leaderboard template to render
 # "correct / total" cells. Stays in sync with seed_bracket SLOTS.
@@ -125,6 +129,14 @@ def bracket_view(request, group_id):
 def match_pick(request, group_id, match_id):
     membership = _get_membership_or_404(request.user, group_id)
     if is_tournament_locked() or membership.bracket_submitted:
+        logger.warning(
+            "pick rejected: user=%s group=%s match=%s locked=%s submitted=%s",
+            request.user.username,
+            group_id,
+            match_id,
+            is_tournament_locked(),
+            membership.bracket_submitted,
+        )
         return HttpResponseBadRequest("Bracket is not editable.")
 
     team_id = request.POST.get("team")
@@ -155,6 +167,13 @@ def match_pick(request, group_id, match_id):
         defaults={"picked_winner": team},
     )
     reconcile_user_picks(request.user, membership.group)
+    logger.info(
+        "pick saved: user=%s group=%s match=%s team=%s",
+        request.user.username,
+        membership.group_id,
+        match.slot,
+        team.code,
+    )
 
     return _render_user_bracket_swap(request, membership)
 
@@ -164,6 +183,13 @@ def match_pick(request, group_id, match_id):
 def submit_bracket(request, group_id):
     membership = _get_membership_or_404(request.user, group_id)
     if is_tournament_locked() or membership.bracket_submitted:
+        logger.warning(
+            "submit rejected: user=%s group=%s locked=%s already_submitted=%s",
+            request.user.username,
+            group_id,
+            is_tournament_locked(),
+            membership.bracket_submitted,
+        )
         return HttpResponseBadRequest("Cannot submit.")
     bracket = build_user_bracket(request.user, membership.group)
     if not bracket["complete"]:
@@ -171,6 +197,11 @@ def submit_bracket(request, group_id):
     membership.bracket_submitted = True
     membership.bracket_submitted_at = timezone.now()
     membership.save(update_fields=["bracket_submitted", "bracket_submitted_at"])
+    logger.info(
+        "bracket submitted: user=%s group=%s",
+        request.user.username,
+        membership.group_id,
+    )
     return _render_user_bracket_swap(request, membership)
 
 

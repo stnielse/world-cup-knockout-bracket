@@ -41,12 +41,15 @@ Run:
 """
 
 import itertools
+import logging
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.bracket.models import FeedAs, Match, Round, Team
+
+logger = logging.getLogger(__name__)
 
 # Far-future placeholder so the tournament global lock never fires until a
 # real kickoff is entered. Year 2099 is deliberately absurd — easy to
@@ -178,11 +181,11 @@ class Command(BaseCommand):
                 m.save(update_fields=["home_team", "away_team"])
                 matchups_synced += 1
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Bracket seed: {created} created, {round_synced} round-synced, "
-                f"{rewired} (re)wired, {kickoff_synced} kickoff-synced, "
-                f"{matchups_synced} matchups-synced, "
-                f"{Match.objects.count()} total matches."
-            )
+        summary = (
+            f"Bracket seed: {created} created, {round_synced} round-synced, "
+            f"{rewired} (re)wired, {kickoff_synced} kickoff-synced, "
+            f"{matchups_synced} matchups-synced, "
+            f"{Match.objects.count()} total matches."
         )
+        self.stdout.write(self.style.SUCCESS(summary))
+        logger.info(summary)

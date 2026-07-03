@@ -2080,3 +2080,163 @@ until results come in.
 - `render.yaml` — no Blueprint / env-var / buildCommand changes. Prod
   seed ran entirely from laptop via existing infra.
 - `requirements.txt` — no new dependencies.
+
+## Render deploy triage + application logging ✅ 2026-07-01
+
+Two threads in one session, both operational hardening while the
+tournament is live (R32 in progress, R16 slate this weekend). No new
+features; no schema changes; no new dependencies.
+
+**Thread 1 — Render deploy stuck overnight**
+
+Symptom: site started 5xxing overnight (2026-06-29 → 2026-06-30) with
+no application logs to inspect. Steven pushed an empty commit
+(`332066d`) to force a redeploy. Build succeeded (migrations,
+superuser bootstrap, seed commands all ran clean), but the deploy
+stalled between Render's `==> Setting WEB_CONCURRENCY=1 ...` line and
+the expected `==> Running 'gunicorn ...'` line. Gunicorn was never
+invoked — the runtime layer wedged before start-command handoff.
+
+Diagnosis path:
+- Confirmed no recent code changes were causal: `6e101cb "important
+  block"` was README-only (added a "no association with FIFA"
+  callout); `332066d` was the empty trigger; last real code commit was
+  `7486bd5` on 2026-06-27 (display-name template fix).
+- Confirmed `status.render.com` clean.
+- Confirmed linked Postgres `wc26-bracket-db` showing "available".
+- Confirmed both stuck log lines were Render-emitted (`==>` prefix),
+  so the gap is Render's platform, not the app.
+
+Fix: **dashboard → web service → Settings → "Clear build cache &
+deploy"**. Third deploy attempt (with cache cleared) proceeded past
+the stall, gunicorn booted, site went live. Total downtime was
+roughly overnight into morning MT. Empty-commit redeploys re-use the
+build cache and *do not* unstick the underlying wedged state — this
+was the operational lesson.
+
+Captured as memory: `project_render_deploy_stuck.md` so future
+sessions don't rediagnose from scratch.
+
+**Thread 2 — Application logging shipped**
+
+Motivation: incident above surfaced zero prod-side observability
+beyond gunicorn access logs. `config/settings/base.py` had no
+`LOGGING` config; codebase had zero `logger.*` calls. Tracebacks were
+going to stdout with Django's default (barely-formatted) handler;
+domain events (picks, submits, winner advances) were invisible.
+
+Scope explicitly approved before touching code:
+- Central `LOGGING` dict in `base.py`, inherited by dev + prod.
+- Plain human-readable format, not JSON. Rationale: Render's log
+  viewer isn't a structured-log tool; Steven will eyeball these more
+  than query them.
+- Single `StreamHandler` → stdout. Render captures stdout. No file
+  handler (free-tier disk is ephemeral).
+- Root at WARNING; `apps.bracket` + `apps.accounts` at INFO;
+  `django.request` + `django.security` at WARNING with
+  `propagate=False` so they land in the same stream without
+  duplicating.
+- INFO for event success (pick saved, bracket submitted, winner set,
+  advance wired, signup, seed summary). WARNING for user-facing
+  rejections that indicate confusion or clock skew (pick / submit
+  rejected because locked or already-submitted).
+- No new dependencies. No Sentry. No per-request access logging
+  (gunicorn already emits it). No SQL query logging.
+
+**Log-call sites added**
+
+- `apps/bracket/views.py`
+  - `match_pick`: WARNING on lock/submit reject (includes
+    `locked=<bool>` and `submitted=<bool>` so the record self-explains
+    which branch fired); INFO on successful pick save
+    (user + group + match slot + team code).
+  - `submit_bracket`: WARNING on reject; INFO on successful submit.
+- `apps/bracket/models.py`
+  - `Match.save()`: INFO on winner change (set or cleared), inside
+    the existing `old_winner_id != self.winner_id` guard so it only
+    fires on true transitions.
+  - `_advance_winner()`: INFO on downstream mutation for the
+    `feeds_into` path *and* the SF→THIRD path. Only fires when there's
+    an actual state change (guarded by the pre-existing
+    `current != target` check).
+- `apps/accounts/views.py`
+  - `signup`: INFO after `login()`.
+- `apps/bracket/management/commands/seed_teams.py` &
+  `seed_bracket.py`
+  - Both emit their existing summary line to `logger.info` alongside
+    `stdout.write`. Local UX unchanged; prod build logs now capture
+    the summary without extra scraping.
+
+**Test added**
+
+`test_pick_rejected_when_locked_logs_warning` in
+`apps/bracket/tests/test_views.py`. Uses `caplog.at_level(WARNING,
+logger="apps.bracket.views")` (needed because our loggers use
+`propagate=False`, so caplog's root handler wouldn't otherwise see
+these records). Asserts a `WARNING` record fires from
+`apps.bracket.views` with `"pick rejected"` and `"locked=True"` in the
+message. Suite now at 82 passing.
+
+**Files touched**
+- `config/settings/base.py` — `LOGGING` dict appended after
+  `DEFAULT_AUTO_FIELD`.
+- `apps/bracket/views.py` — 1 import, 4 log calls.
+- `apps/bracket/models.py` — 1 import, 3 log-call sites (Match.save +
+  2 branches of _advance_winner).
+- `apps/accounts/views.py` — 1 import, 1 log call.
+- `apps/bracket/management/commands/seed_teams.py` — 1 import, 1 log
+  call.
+- `apps/bracket/management/commands/seed_bracket.py` — 1 import, 1
+  log call.
+- `apps/bracket/tests/test_views.py` — 1 import, 1 new test.
+
+**Decisions worth remembering**
+- **Format string: `"%(asctime)s %(levelname)s %(name)s
+  %(message)s"`**. Deliberate choice against JSON. Rationale: Render
+  free tier's log viewer is a plain scroller. Human-readable wins for
+  low-volume eyeball scanning; a rewrite to structured is cheap later
+  if the viewing tool changes.
+- **`propagate=False` on named loggers.** Without this, records
+  duplicate: once via the named logger's handler, once via the root
+  logger's handler. Cost: `caplog` in tests needs an explicit
+  `logger=` argument to see them.
+- **INFO threshold decision for domain events** (pick saved, winner
+  set, etc.). WARNING would only fire for rejections; a boring quiet
+  log stream during normal play is a *feature*, not undertesting. If
+  volume ever becomes a problem, we can drop `apps.bracket` to
+  WARNING with one line in `base.py`.
+- **Skipped password-reset request logging** despite it being in the
+  original scope. Django's built-in `PasswordResetView` is wired via
+  `accounts/urls.py`; adding one log line would mean subclassing a
+  CBV or wiring a signal. Scope creep for one event; flagged for
+  Steven's redirect and he did not push back.
+
+**Verification**
+1. `make test` clean — 82 passing (was 81 before the new test).
+2. Confirmed the new WARNING branch fires via the new test (which
+  asserts the exact message content, not just count).
+3. No dev-side behavior change: seed commands still print their
+  summary to stdout in normal color-styled Django management output;
+  the new `logger.info` mirrors it for prod capture.
+
+**Pending / deferred**
+- **Tier decision for the tournament window** — outage above is the
+  strongest data point yet that free tier isn't ideal for a
+  live-audience deployment. Starter ($7/mo) gets shell access + real
+  logs + no wedged-runtime surprises. Reversible after 2026-07-19.
+  Steven hasn't decided; flagged in `project_render_deploy_stuck.md`.
+- **View-rendering test coverage** (carried forward from last
+  milestone). Still no test asserts team name strings appear in
+  bracket HTML. Same low-priority bucket as before.
+- **Log-based metrics / alerting** — none. No Sentry integration.
+  If tournament traffic exposes a bug, Steven will grep the Render
+  log stream manually.
+- **CI/CD quiz** — still queued for next-session start via
+  `pending_quiz_cicd.md`. Deferred again this session.
+
+**Untouched (per working contract)**
+- `.env` — never read, edited, or inspected.
+- `render.yaml` — no Blueprint / env-var / buildCommand changes.
+- `requirements.txt` — no new dependencies.
+- `prod.py` — no direct edits; the new `LOGGING` config is inherited
+  from `base.py` via `from .base import *`.

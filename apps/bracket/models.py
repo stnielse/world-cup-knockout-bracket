@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import timedelta
 
@@ -6,6 +7,8 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import UniqueConstraint
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 JOIN_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 JOIN_CODE_LEN = 6
@@ -101,6 +104,13 @@ class Match(models.Model):
             )
         super().save(*args, **kwargs)
         if old_winner_id != self.winner_id:
+            if self.winner_id is None:
+                logger.info("winner cleared: match=%s", self.slot)
+            else:
+                winner_code = self.winner.code if self.winner else "?"
+                logger.info(
+                    "winner set: match=%s team=%s", self.slot, winner_code
+                )
             _advance_winner(self)
 
 
@@ -128,6 +138,21 @@ def _advance_winner(match):
         if current != target:
             setattr(downstream, field, new_winner)
             downstream.save(update_fields=[field])
+            if new_winner is None:
+                logger.info(
+                    "advance unwired: slot=%s field=%s (from match=%s)",
+                    downstream.slot,
+                    field,
+                    match.slot,
+                )
+            else:
+                logger.info(
+                    "advance wired: match=%s team=%s -> slot=%s field=%s",
+                    match.slot,
+                    new_winner.code,
+                    downstream.slot,
+                    field,
+                )
 
     if match.round == Round.SF:
         third_field = (
@@ -144,6 +169,19 @@ def _advance_winner(match):
                 if current != target:
                     setattr(third, third_field, loser)
                     third.save(update_fields=[third_field])
+                    if loser is None:
+                        logger.info(
+                            "third-place unwired: field=%s (from match=%s)",
+                            third_field,
+                            match.slot,
+                        )
+                    else:
+                        logger.info(
+                            "third-place wired: match=%s loser=%s -> field=%s",
+                            match.slot,
+                            loser.code,
+                            third_field,
+                        )
 
 
 def _determine_sf_loser(sf_match):
